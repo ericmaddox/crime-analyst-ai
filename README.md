@@ -2,6 +2,9 @@
 
 This project leverages Python, Folium, the Ollama AI model, and scikit-learn to analyze crime data and predict future crime trends. It visualizes actual crime data on a map and provides narrative insights from the AI model. Additionally, the script now validates predictions using both the Ollama model and historical crime data to ensure predictions are realistic and geographically plausible.
 
+![Crime Analyst AI Map](https://github.com/ericmaddox/crime-analyst-ai/blob/main/media/crime_analyst_ai_map.JPG)
+
+
 ## Table of Contents
 
 - [Installation](#installation)
