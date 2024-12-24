@@ -1,4 +1,6 @@
 # Crime Analyst AI
+[![Powered by Ollama](https://img.shields.io/badge/Powered%20by-Ollama-blue)](https://ollama.com)
+
 
 This project leverages Python, Folium, the Ollama AI model, and scikit-learn to analyze crime data and predict future crime trends. It visualizes actual crime data on a map and provides narrative insights from the AI model. Additionally, the script now validates predictions using both the Ollama model and historical crime data to ensure predictions are realistic and geographically plausible.
 
