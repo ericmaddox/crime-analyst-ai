@@ -106,6 +106,5 @@ I would like to extend my thanks to the following resources and individuals:
 
 - **Folium**: For providing an excellent library to visualize geospatial data on interactive maps. [Folium GitHub](https://github.com/python-visualization/folium)
 - **Pandas**: For the powerful data analysis and manipulation capabilities. [Pandas Documentation](https://pandas.pydata.org/pandas-docs/stable/)
-- **NumPy**: For the numerical computing capabilities. [NumPy Documentation](https://numpy.org/doc/)
 - **Openpyxl**: For reading and writing Excel files. [Openpyxl GitHub](https://github.com/jmcnamara/openpyxl)
 - **Llama**: For the AI model used for crime data analysis and prediction. [Ollama AI](https://ollama.ai)
