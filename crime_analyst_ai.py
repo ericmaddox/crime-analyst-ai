@@ -1,9 +1,6 @@
 import subprocess
 import folium
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
 import os
 import logging
 
@@ -40,7 +37,6 @@ def run_ollama_predictive_model(prompt, data_for_model):
 def read_crime_data(file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
     if file_extension == '.csv':
-        # Read in chunks and concatenate
         chunks = pd.read_csv(file_path, encoding='ISO-8859-1', chunksize=10000)
         return pd.concat(chunk for chunk in chunks)
     elif file_extension == '.xlsx':
@@ -91,8 +87,6 @@ def validate_predictions_with_historical_data(actual_data, insights):
     for predicted_crime in predicted_crimes:
         if predicted_crime not in actual_crimes:
             logging.warning(f"Predicted crime type '{predicted_crime}' is not commonly observed in the provided data.")
-    
-    # You can add more checks for geographical or temporal consistency based on the crime data.
 
 # Function to check likelihood values
 def check_prediction_likelihood(insights):
@@ -136,32 +130,10 @@ def save_analysis_to_file(output, file_name='predicted_crime_analysis.txt'):
         f.write(output)
     logging.info(f"Predicted crime analysis has been saved as '{file_name}'.")
 
-# Function to compare predictions from scikit-learn and Ollama
-def compare_predictions(y_test, y_pred_sklearn, ollama_predictions):
-    if len(y_test) != len(ollama_predictions):
-        logging.warning("Inconsistent number of samples between y_test and ollama_predictions")
-        return None
-    comparison_df = pd.DataFrame({
-        'Actual': y_test,
-        'scikit-learn Prediction': y_pred_sklearn,
-        'Ollama Prediction': ollama_predictions
-    })
-    logging.info("\nComparison of Predictions:\n")
-    logging.info(comparison_df.head())
-    return comparison_df
-
-# Function to perform detailed analysis
-def detailed_analysis(comparison_df):
-    if comparison_df is not None:
-        mismatches = comparison_df[comparison_df['scikit-learn Prediction'] != comparison_df['Ollama Prediction']]
-        logging.info("\nMismatches between models:\n")
-        logging.info(mismatches.head())
-
 def main():
     file_path = 'sample_crime_data.xlsx'
     actual_crime_data = read_crime_data(file_path)
     
-    # Updated prompt to ensure data usage and historical knowledge consideration
     prompt = (
         "Based on the following crime data (latitude, longitude, crime type), use your historical crime knowledge to "
         "make predictions on potential future crime hotspots. Your predictions should include latitude, longitude, crime type, "
@@ -183,35 +155,10 @@ def main():
     
     validate_predictions_with_historical_data(actual_crime_data, insights)
     check_prediction_likelihood(insights)
-    
-    df = actual_crime_data.copy()
-    df['CrimeTypeNum'] = df['CrimeType'].astype('category').cat.codes
-    X = df[['Latitude', 'Longitude']]
-    y = df['CrimeTypeNum']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
-    clf.fit(X_train, y_train)
-    y_pred_sklearn = clf.predict(X_test)
-    sklearn_accuracy = accuracy_score(y_test, y_pred_sklearn)
-    logging.info(f"scikit-learn Model Accuracy: {sklearn_accuracy:.3f}")
-    
-    # Extracting predictions from insights and ensuring the length matches
-    ollama_predictions = [insight['CrimeType'] for insight in insights if 'CrimeType' in insight]
-    
-    # Truncate or fill the predictions to ensure the length matches y_test
-    if len(ollama_predictions) > len(y_test):
-        ollama_predictions = ollama_predictions[:len(y_test)]
-    elif len(ollama_predictions) < len(y_test):
-        ollama_predictions.extend(["Unknown"] * (len(y_test) - len(ollama_predictions)))
-
-    ollama_accuracy = accuracy_score(y_test, ollama_predictions)
-    logging.info(f"Ollama Model Accuracy: {ollama_accuracy:.3f}")
-
-    comparison_df = compare_predictions(y_test, y_pred_sklearn, ollama_predictions)
-    detailed_analysis(comparison_df)
 
     create_crime_map(actual_crime_data, insights)
     save_analysis_to_file(predicted_crime_data_output)
 
 if __name__ == '__main__':
     main()
+
