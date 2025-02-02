@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://github.com/ericmaddox/crime-analyst-ai/raw/main/media/crime_analyst_ai.JPEG" alt="Crime Analyst AI" width="200" />
+</div>
+
 # Crime Analyst AI
 [![Powered by Ollama](https://img.shields.io/badge/Powered%20by-Ollama-blue)](https://ollama.com)
 
