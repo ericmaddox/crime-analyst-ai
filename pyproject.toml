@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crime-analyst-ai"
+version = "1.0.0"
+description = "AI-powered predictive crime analysis tool using Ollama LLM"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Eric Maddox", email = "eric.maddox@outlook.com"}
+]
+maintainers = [
+    {name = "Eric Maddox", email = "eric.maddox@outlook.com"}
+]
+keywords = [
+    "crime-analysis",
+    "ai",
+    "machine-learning",
+    "ollama",
+    "gradio",
+    "visualization",
+    "geospatial",
+    "predictive-analytics"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "pandas>=1.5.3",
+    "folium>=0.14.0",
+    "gradio>=4.0.0",
+    "numpy>=1.24.0",
+    "openpyxl>=3.1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ericmaddox/crime-analyst-ai"
+Documentation = "https://github.com/ericmaddox/crime-analyst-ai#readme"
+Repository = "https://github.com/ericmaddox/crime-analyst-ai.git"
+Issues = "https://github.com/ericmaddox/crime-analyst-ai/issues"
+
+[project.scripts]
+crime-analyst-ai = "crime_analyst_ai.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crime_analyst_ai = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip = [".git", ".venv", "venv", "build", "dist"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=src/crime_analyst_ai"
+

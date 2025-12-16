@@ -12,15 +12,25 @@ import os
 import logging
 import json
 import re
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from collections import Counter
 
+# Get the project root directory
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "output"
+DATA_DIR = PROJECT_ROOT / "data"
+
+# Ensure output directory exists
+OUTPUT_DIR.mkdir(exist_ok=True)
+
 # Configure logging
+LOG_FILE = OUTPUT_DIR / "crime_analyst_ai.log"
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("crime_analyst_ai.log"),
+        logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
     ]
 )
@@ -408,7 +418,7 @@ def create_crime_map(
     actual_data: pd.DataFrame,
     insights: List[Dict],
     stats: Dict,
-    output_file: str = 'crime_analyst_ai_map.html'
+    output_file: Optional[str] = None
 ) -> str:
     """
     Create an interactive map with actual crime data and predictions.
@@ -417,11 +427,14 @@ def create_crime_map(
         actual_data: DataFrame with actual crime data
         insights: List of prediction dictionaries
         stats: Crime statistics for centering
-        output_file: Output HTML file path
+        output_file: Output HTML file path (optional, defaults to output directory)
         
     Returns:
         Path to the generated HTML file
     """
+    if output_file is None:
+        output_file = str(OUTPUT_DIR / 'crime_analyst_ai_map.html')
+    
     bounds = stats['geographic_bounds']
     map_center = [bounds['center_lat'], bounds['center_lon']]
     
@@ -509,7 +522,7 @@ def save_analysis_report(
     output: str,
     stats: Dict,
     insights: List[Dict],
-    file_name: str = 'predicted_crime_analysis.txt'
+    file_name: Optional[str] = None
 ) -> str:
     """
     Save a comprehensive analysis report to a text file.
@@ -518,11 +531,14 @@ def save_analysis_report(
         output: Raw LLM output
         stats: Crime statistics
         insights: Parsed predictions
-        file_name: Output file path
+        file_name: Output file path (optional, defaults to output directory)
         
     Returns:
         Path to the saved report
     """
+    if file_name is None:
+        file_name = str(OUTPUT_DIR / 'predicted_crime_analysis.txt')
+    
     with open(file_name, 'w') as f:
         f.write("=" * 60 + "\n")
         f.write("CRIME ANALYST AI - PREDICTIVE ANALYSIS REPORT\n")
@@ -620,15 +636,15 @@ def run_analysis(
 
 def main():
     """Main entry point for command-line usage."""
-    file_path = 'sample_crime_data.csv'
+    sample_file = DATA_DIR / 'sample_crime_data.csv'
     
-    if not os.path.exists(file_path):
-        logging.error(f"Data file not found: {file_path}")
+    if not sample_file.exists():
+        logging.error(f"Data file not found: {sample_file}")
         logging.info("Please provide a crime data file with columns: Latitude, Longitude, CrimeType")
         return
     
     try:
-        df = read_crime_data(file_path)
+        df = read_crime_data(str(sample_file))
         stats, insights, map_path, report_path = run_analysis(df)
         
         print("\n" + "=" * 50)
@@ -647,3 +663,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

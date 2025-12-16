@@ -7,6 +7,7 @@
 [![Powered by Ollama](https://img.shields.io/badge/Powered%20by-Ollama-blue)](https://ollama.com)
 [![Gradio UI](https://img.shields.io/badge/UI-Gradio-orange)](https://gradio.app)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 An AI-powered predictive crime analysis tool that leverages Python, Folium, Gradio, and the Ministral AI model (via Ollama) to analyze historical crime data and predict future crime trends. Features an enterprise-grade dark-themed web interface for uploading data, running predictive analysis, and visualizing results on an interactive map.
 
@@ -45,8 +46,7 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
-- [Outputs](#outputs)
-- [Customization](#customization)
+- [Configuration](#configuration)
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
@@ -78,21 +78,24 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+Or install as a package:
+```bash
+pip install -e .
+```
+
 ### Step 4: Set Up Ollama
 
-1. **Download and Install Ollama**:
-   Follow the instructions on the [Ollama website](https://ollama.ai) to install Ollama on your system.
+1. **Download and Install Ollama** from [ollama.ai](https://ollama.ai)
 
-2. **Pull the AI Model**:
+2. **Pull the AI Model:**
    ```bash
    ollama pull ministral-3:3b
    ```
 
-3. **Verify Installation**:
+3. **Verify Installation:**
    ```bash
    ollama list
    ```
-   You should see `ministral-3:3b` in the list.
 
 ## Quick Start
 
@@ -101,7 +104,7 @@ pip install -r requirements.txt
 source venv/bin/activate
 
 # Launch the application (opens browser automatically)
-python app.py
+python run.py
 ```
 
 The application will automatically open in your default browser at `http://localhost:7860`.
@@ -110,43 +113,22 @@ The application will automatically open in your default browser at `http://local
 
 ### Web Interface (Recommended)
 
-1. **Launch the App**:
-   ```bash
-   python app.py
-   ```
-   The browser opens automatically to the Crime Analyst AI interface.
+```bash
+python run.py
+```
 
-2. **Upload Data**:
-   - Drag and drop a CSV or Excel file into the upload area
-   - Or click to browse and select your file
-
-3. **Map Columns**:
-   - The system auto-detects common column names
-   - Verify or adjust the Latitude, Longitude, and Crime Type mappings
-
-4. **Run Analysis**:
-   - Click "🔍 Run Predictive Analysis"
-   - Watch the progress as data is processed
-
-5. **View Results**:
-   - **Interactive Map** - Explore the embedded map with heatmaps and markers
-   - **Statistics** - View crime type distribution charts
-   - **Predictions** - Review AI predictions with risk levels
-   - **Full Report** - Read the complete analysis with AI insights
-
-6. **Export**:
-   - Download the interactive map as HTML
-   - Download the full analysis report as TXT
+Options:
+- `--port 8080` - Use a different port
+- `--no-browser` - Don't auto-open browser
+- `--cli` - Run in command-line mode
 
 ### Command Line Interface
 
-For automated/scripted usage:
-
 ```bash
-python crime_analyst_ai.py
+python run.py --cli
 ```
 
-This expects a `sample_crime_data.csv` file in the project directory.
+This expects `data/sample_crime_data.csv` to exist.
 
 ### Data Format
 
@@ -161,96 +143,62 @@ Your crime data file should include these columns:
 | Time | No | Time of incident |
 | Address | No | Street address |
 
-A sample data file (`sample_crime_data.csv`) with 100 Atlanta-area records is included for testing.
+A sample data file is included at `data/sample_crime_data.csv`.
 
 ## Project Structure
 
 ```
 crime-analyst-ai/
-├── app.py                    # Gradio web interface
-├── crime_analyst_ai.py       # Core analysis engine
-├── sample_crime_data.csv     # Sample data for testing
-├── requirements.txt          # Python dependencies
-├── README.md                 # This file
-├── LICENSE                   # MIT License
-├── venv/                     # Virtual environment (created during setup)
-└── media/                    # Project images
-    ├── crime_analyst_ai.JPEG
-    └── crime_analyst_ai_map.JPG
+├── .github/                     # GitHub templates
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.md
+│   │   └── feature_request.md
+│   └── PULL_REQUEST_TEMPLATE.md
+├── data/                        # Sample and user data
+│   └── sample_crime_data.csv
+├── media/                       # Project images
+│   ├── crime_analyst_ai.JPEG
+│   └── crime_analyst_ai_v2.png
+├── output/                      # Generated files (gitignored)
+├── src/
+│   └── crime_analyst_ai/        # Main package
+│       ├── __init__.py
+│       ├── app.py               # Gradio web interface
+│       └── core.py              # Analysis engine
+├── .gitignore
+├── CHANGELOG.md
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── LICENSE
+├── pyproject.toml               # Package configuration
+├── README.md
+├── requirements.txt
+└── run.py                       # Application launcher
 ```
 
-## Outputs
-
-### Interactive Map (`crime_analyst_ai_map.html`)
-
-- **Dark-themed CartoDB basemap** for professional appearance
-- **Heatmap layer** showing crime density with color gradient
-- **Clustered markers** for actual crime locations (blue)
-- **Prediction markers** color-coded by risk level:
-  - 🔴 Red = High risk (>70% likelihood)
-  - 🟠 Orange = Medium risk (40-70%)
-  - 🟢 Green = Low risk (<40%)
-- **Interactive legend** explaining all markers
-- **Layer controls** to toggle visibility
-
-### Analysis Report (`predicted_crime_analysis.txt`)
-
-- Data summary (total records, date range)
-- Crime type distribution with percentages
-- Top crime categories
-- AI predictions with:
-  - Geographic coordinates
-  - Crime type
-  - Likelihood percentage
-  - Analysis reasoning
-- Raw model output
-
-## Customization
+## Configuration
 
 ### Change the AI Model
 
-Edit `crime_analyst_ai.py` line 26:
+Edit `src/crime_analyst_ai/core.py`:
 
 ```python
 OLLAMA_MODEL = "your-preferred-model"
 ```
 
-Compatible models include any Ollama model capable of text generation.
+### Adjust Analysis Parameters
 
-### Adjust Hotspot Detection
+- **Hotspot Detection**: Modify `detect_hotspots()` in `core.py`
+- **LLM Prompt**: Customize `build_analysis_prompt()` in `core.py`
+- **Map Styling**: Edit `create_crime_map()` in `core.py`
 
-Modify the `detect_hotspots()` function in `crime_analyst_ai.py`:
-- Change grid size (default: ~1km cells)
-- Adjust number of hotspots returned
+### UI Customization
 
-### Customize the UI Theme
-
-Edit the `CUSTOM_CSS` variable in `app.py` to modify:
-- Color scheme (CSS variables at top)
-- Typography
-- Component styling
-- Layout spacing
-
-### Modify the Analysis Prompt
-
-Edit `build_analysis_prompt()` in `crime_analyst_ai.py` to change:
-- Instructions to the AI
-- Output format requirements
-- Number of predictions requested
-
-## Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| pandas | ≥1.5.3 | Data manipulation |
-| folium | ≥0.14.0 | Interactive maps |
-| gradio | ≥4.0.0 | Web interface |
-| numpy | ≥1.24.0 | Numerical operations |
-| openpyxl | ≥3.1.2 | Excel file support |
+Edit the `CUSTOM_CSS` variable in `src/crime_analyst_ai/app.py`.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) first.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)

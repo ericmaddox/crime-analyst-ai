@@ -6,11 +6,15 @@ Professional interface for predictive crime analysis
 import gradio as gr
 import pandas as pd
 import os
-import tempfile
+import sys
+from pathlib import Path
 from typing import Tuple, Optional, List
 import logging
 
-from crime_analyst_ai import (
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from src.crime_analyst_ai.core import (
     read_crime_data,
     validate_columns,
     compute_crime_statistics,
@@ -22,7 +26,8 @@ from crime_analyst_ai import (
     create_crime_map,
     save_analysis_report,
     run_analysis,
-    OLLAMA_MODEL
+    OLLAMA_MODEL,
+    OUTPUT_DIR
 )
 
 # Configure logging for UI
@@ -917,14 +922,18 @@ def create_app():
     return app
 
 
-# Main entry point
-if __name__ == "__main__":
+def main():
+    """Main entry point for launching the application."""
     app = create_app()
     app.launch(
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
         show_error=True,
-        inbrowser=True  # Automatically open browser
+        inbrowser=True
     )
+
+
+if __name__ == "__main__":
+    main()
 
