@@ -3,18 +3,48 @@
 </div>
 
 # Crime Analyst AI
+
 [![Powered by Ollama](https://img.shields.io/badge/Powered%20by-Ollama-blue)](https://ollama.com)
+[![Gradio UI](https://img.shields.io/badge/UI-Gradio-orange)](https://gradio.app)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green)](https://python.org)
 
-
-This project leverages Python, Folium and the Llama AI model to analyze crime data and predict future crime trends. It visualizes actual crime data on a map and provides narrative insights from the AI model. Additionally, the script validates predictions using both the Llama model and historical crime data to ensure predictions are realistic and geographically plausible.
+An AI-powered predictive crime analysis tool that leverages Python, Folium, Gradio, and the Ministral AI model (via Ollama) to analyze historical crime data and predict future crime trends. Features an enterprise-grade dark-themed web interface for uploading data, running predictive analysis, and visualizing results on an interactive map.
 
 ![Crime Analyst AI Map](https://github.com/ericmaddox/crime-analyst-ai/blob/main/media/crime_analyst_ai_map.JPG)
 
+## Features
+
+### Enterprise Web Interface
+- **Professional Dark Theme** - Modern, enterprise-grade UI with carefully designed aesthetics
+- **Drag-and-Drop Upload** - Easy CSV/Excel file import with automatic column detection
+- **Smart Column Mapping** - Auto-detects latitude, longitude, and crime type columns
+- **Real-time Progress** - Visual progress indicators during analysis
+
+### AI-Powered Analysis
+- **Statistical Preprocessing** - Computes crime distribution, geographic hotspots, and patterns
+- **Intelligent Predictions** - Uses Ministral-3:3b model for context-aware crime prediction
+- **Hotspot Detection** - Identifies high-crime areas using density-based clustering
+- **Validation** - Ensures predictions are geographically plausible
+
+### Interactive Visualization
+- **Embedded Map View** - Interactive Folium map displayed directly in the UI
+- **Heatmap Layer** - Crime density visualization with gradient coloring
+- **Risk-Coded Markers** - Predictions colored by likelihood (red=high, orange=medium, green=low)
+- **Marker Clustering** - Groups nearby markers for better performance
+- **Legend** - Clear identification of actual vs. predicted crimes
+
+### Analysis Results
+- **Statistics Tab** - Visual crime type distribution with progress bars
+- **Predictions Tab** - Sortable table with location, type, and risk levels
+- **Full Report Tab** - Complete analysis summary with AI output
+- **Export Options** - Download interactive map (HTML) and full report (TXT)
 
 ## Table of Contents
 
 - [Installation](#installation)
+- [Quick Start](#quick-start)
 - [Usage](#usage)
+- [Project Structure](#project-structure)
 - [Outputs](#outputs)
 - [Customization](#customization)
 - [Contributing](#contributing)
@@ -25,90 +55,223 @@ This project leverages Python, Folium and the Llama AI model to analyze crime da
 
 ### Prerequisites
 
-Ensure you have Python 3.8 or higher installed on your system. Install the necessary libraries using pip:
+- Python 3.8 or higher
+- [Ollama](https://ollama.ai) installed and running
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/ericmaddox/crime-analyst-ai.git
+cd crime-analyst-ai
+```
+
+### Step 2: Set Up Virtual Environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+### Step 3: Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Setting Up Ollama
+### Step 4: Set Up Ollama
 
 1. **Download and Install Ollama**:
-   Follow the instructions provided on the [Ollama website](https://ollama.ai) to download and set up Ollama on your local machine.
+   Follow the instructions on the [Ollama website](https://ollama.ai) to install Ollama on your system.
 
-2. **Pull the Ollama Model**:
+2. **Pull the AI Model**:
    ```bash
-   ollama pull llama3.2
+   ollama pull ministral-3:3b
    ```
 
-3. **Verify Model Availability**:
+3. **Verify Installation**:
    ```bash
    ollama list
    ```
+   You should see `ministral-3:3b` in the list.
+
+## Quick Start
+
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Launch the application (opens browser automatically)
+python app.py
+```
+
+The application will automatically open in your default browser at `http://localhost:7860`.
 
 ## Usage
 
-1. **Prepare the CSV or XLSX File**:
-   - Ensure your crime data file is named `sample_crime_data.csv` or `sample_crime_data.xlsx` and placed in the same directory as your script.
-   - If your file has a different name, update the `file_path` variable in the script to match your file name.
+### Web Interface (Recommended)
 
-   ```python
-   file_path = 'your_crime_data_file.csv'  # Replace with your actual file name
+1. **Launch the App**:
+   ```bash
+   python app.py
    ```
+   The browser opens automatically to the Crime Analyst AI interface.
 
-2. **Modify the Script (if necessary)**:
-   - Open the script file `crime_analyst_ai.py`.
-   - Locate the function `run_ollama_predictive_model`.
-   - Modify the model name within the script to match the Ollama model you are using. For example, if you are using a different model, replace `llama3.2` with your model name.
+2. **Upload Data**:
+   - Drag and drop a CSV or Excel file into the upload area
+   - Or click to browse and select your file
 
-   **Example Modification**:
-   ```python
-   def run_ollama_predictive_model(prompt):
-       """Run Ollama AI model to generate or process crime data."""
-       try:
-           process = subprocess.run(['ollama', 'run', 'YOUR_MODEL_NAME_HERE', prompt], capture_output=True, text=True, check=True)
-   ```
+3. **Map Columns**:
+   - The system auto-detects common column names
+   - Verify or adjust the Latitude, Longitude, and Crime Type mappings
 
-3. **Run the Script**:
-   - Execute the script:
-     ```bash
-     python3 crime_analyst_ai.py
-     ```
+4. **Run Analysis**:
+   - Click "🔍 Run Predictive Analysis"
+   - Watch the progress as data is processed
+
+5. **View Results**:
+   - **Interactive Map** - Explore the embedded map with heatmaps and markers
+   - **Statistics** - View crime type distribution charts
+   - **Predictions** - Review AI predictions with risk levels
+   - **Full Report** - Read the complete analysis with AI insights
+
+6. **Export**:
+   - Download the interactive map as HTML
+   - Download the full analysis report as TXT
+
+### Command Line Interface
+
+For automated/scripted usage:
+
+```bash
+python crime_analyst_ai.py
+```
+
+This expects a `sample_crime_data.csv` file in the project directory.
+
+### Data Format
+
+Your crime data file should include these columns:
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| Latitude | Yes | Geographic latitude (decimal degrees) |
+| Longitude | Yes | Geographic longitude (decimal degrees) |
+| CrimeType | Yes | Category of crime (e.g., Theft, Assault) |
+| Date | No | Date of incident |
+| Time | No | Time of incident |
+| Address | No | Street address |
+
+A sample data file (`sample_crime_data.csv`) with 100 Atlanta-area records is included for testing.
+
+## Project Structure
+
+```
+crime-analyst-ai/
+├── app.py                    # Gradio web interface
+├── crime_analyst_ai.py       # Core analysis engine
+├── sample_crime_data.csv     # Sample data for testing
+├── requirements.txt          # Python dependencies
+├── README.md                 # This file
+├── LICENSE                   # MIT License
+├── venv/                     # Virtual environment (created during setup)
+└── media/                    # Project images
+    ├── crime_analyst_ai.JPEG
+    └── crime_analyst_ai_map.JPG
+```
 
 ## Outputs
 
-- **Map File**: `crime_analyst_ai_map.html` visualizes both actual crime data and predictive insights.
-- **Narrative Analysis File**: `predicted_crime_analysis.txt` contains the narrative output from the Ollama model.
+### Interactive Map (`crime_analyst_ai_map.html`)
+
+- **Dark-themed CartoDB basemap** for professional appearance
+- **Heatmap layer** showing crime density with color gradient
+- **Clustered markers** for actual crime locations (blue)
+- **Prediction markers** color-coded by risk level:
+  - 🔴 Red = High risk (>70% likelihood)
+  - 🟠 Orange = Medium risk (40-70%)
+  - 🟢 Green = Low risk (<40%)
+- **Interactive legend** explaining all markers
+- **Layer controls** to toggle visibility
+
+### Analysis Report (`predicted_crime_analysis.txt`)
+
+- Data summary (total records, date range)
+- Crime type distribution with percentages
+- Top crime categories
+- AI predictions with:
+  - Geographic coordinates
+  - Crime type
+  - Likelihood percentage
+  - Analysis reasoning
+- Raw model output
 
 ## Customization
 
-You can customize the script to include additional machine learning models for further predictive analysis. The script includes additional validation features:
+### Change the AI Model
 
-- **Prediction Validation**: Predictions made by the Llama model are validated against historical crime data to ensure they make sense geographically and temporally.
-  
-- **Likelihood Validation**: A validation step ensures the likelihood values generated by Llama are within a valid range (0-100%).
+Edit `crime_analyst_ai.py` line 26:
 
-### Performance Optimization
+```python
+OLLAMA_MODEL = "your-preferred-model"
+```
 
-The script processes large CSV files in chunks to handle large data efficiently.
+Compatible models include any Ollama model capable of text generation.
 
-### Enhanced Visualization
+### Adjust Hotspot Detection
 
-The map visualization includes interactive features, such as tooltips and different marker colors for various crime types.
+Modify the `detect_hotspots()` function in `crime_analyst_ai.py`:
+- Change grid size (default: ~1km cells)
+- Adjust number of hotspots returned
+
+### Customize the UI Theme
+
+Edit the `CUSTOM_CSS` variable in `app.py` to modify:
+- Color scheme (CSS variables at top)
+- Typography
+- Component styling
+- Layout spacing
+
+### Modify the Analysis Prompt
+
+Edit `build_analysis_prompt()` in `crime_analyst_ai.py` to change:
+- Instructions to the AI
+- Output format requirements
+- Number of predictions requested
+
+## Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| pandas | ≥1.5.3 | Data manipulation |
+| folium | ≥0.14.0 | Interactive maps |
+| gradio | ≥4.0.0 | Web interface |
+| numpy | ≥1.24.0 | Numerical operations |
+| openpyxl | ≥3.1.2 | Excel file support |
 
 ## Contributing
 
-Contributions are welcome! Feel free to submit a pull request or open an issue to discuss improvements, bug fixes, or new features.
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-I would like to extend my thanks to the following resources and individuals:
+- **[Folium](https://github.com/python-visualization/folium)** - Interactive map visualization
+- **[Pandas](https://pandas.pydata.org/)** - Data analysis and manipulation
+- **[Gradio](https://gradio.app)** - Web interface framework
+- **[Ollama](https://ollama.ai)** - Local AI model runtime
+- **[Mistral AI](https://mistral.ai)** - Ministral-3:3b language model
 
-- **Folium**: For providing an excellent library to visualize geospatial data on interactive maps. [Folium GitHub](https://github.com/python-visualization/folium)
-- **Pandas**: For the powerful data analysis and manipulation capabilities. [Pandas Documentation](https://pandas.pydata.org/pandas-docs/stable/)
-- **Openpyxl**: For reading and writing Excel files. [Openpyxl GitHub](https://github.com/jmcnamara/openpyxl)
-- **Llama**: For the AI model used for crime data analysis and prediction. [Ollama AI](https://ollama.ai)
+---
+
+<div align="center">
+  <strong>Built with ❤️ for public safety</strong>
+</div>

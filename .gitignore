@@ -169,3 +169,15 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Generated output files
+crime_analyst_ai_map.html
+predicted_crime_analysis.txt
+crime_analyst_ai.log
+
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
