@@ -10,7 +10,7 @@
 
 An AI-powered predictive crime analysis tool that leverages Python, Folium, Gradio, and the Ministral AI model (via Ollama) to analyze historical crime data and predict future crime trends. Features an enterprise-grade dark-themed web interface for uploading data, running predictive analysis, and visualizing results on an interactive map.
 
-![Crime Analyst AI Map](https://github.com/ericmaddox/crime-analyst-ai/blob/main/media/crime_analyst_ai_map.JPG)
+![Crime Analyst AI Interface](https://github.com/ericmaddox/crime-analyst-ai/blob/main/media/crime_analyst_ai_v2.png)
 
 ## Features
 
