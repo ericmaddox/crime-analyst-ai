@@ -78,6 +78,9 @@ venv.bak/
 output/
 *.log
 
+# Internal documents (not for public)
+ROADMAP.md
+
 # Temporary files
 *.tmp
 *.temp
