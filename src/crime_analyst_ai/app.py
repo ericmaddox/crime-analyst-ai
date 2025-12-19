@@ -855,7 +855,7 @@ def create_app():
                             """
                         )
                     
-                    with gr.TabItem("📈 Statistics"):
+                    with gr.TabItem("Statistics"):
                         stats_display = gr.HTML(
                             value="""
                             <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
@@ -864,7 +864,7 @@ def create_app():
                             """
                         )
                     
-                    with gr.TabItem("🎯 Predictions"):
+                    with gr.TabItem("Predictions"):
                         predictions_display = gr.HTML(
                             value="""
                             <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
@@ -873,7 +873,7 @@ def create_app():
                             """
                         )
                     
-                    with gr.TabItem("📄 Full Report"):
+                    with gr.TabItem("Full Report"):
                         report_display = gr.HTML(
                             value="""
                             <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
