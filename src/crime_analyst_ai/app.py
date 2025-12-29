@@ -21,6 +21,7 @@ from src.crime_analyst_ai.core import (
     compute_temporal_patterns,
     compute_crime_type_patterns,
     compute_seasonal_patterns,
+    compute_crime_forecast,
     detect_hotspots,
     build_analysis_prompt,
     run_ollama_predictive_model,
@@ -531,11 +532,14 @@ def run_crime_analysis(
         progress(0.30, desc="Analyzing seasonal patterns...")
         seasonal = compute_seasonal_patterns(df_validated)
         
-        progress(0.35, desc="Detecting hotspots (DBSCAN)...")
+        progress(0.33, desc="Forecasting crime trends (Prophet)...")
+        forecast = compute_crime_forecast(df_validated)
+        
+        progress(0.38, desc="Detecting hotspots (DBSCAN)...")
         hotspots = detect_hotspots(df_validated)
         
-        progress(0.4, desc="Building analysis prompt...")
-        prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns, seasonal)
+        progress(0.45, desc="Building analysis prompt...")
+        prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns, seasonal, forecast)
         
         progress(0.5, desc=f"Querying {OLLAMA_MODEL}...")
         llm_output = run_ollama_predictive_model(prompt)
@@ -564,8 +568,8 @@ def run_crime_analysis(
         progress(0.9, desc="Creating report...")
         report_file = save_analysis_report(llm_output, stats, insights)
         
-        # Generate stats HTML (now includes temporal data, crime patterns, and seasonal)
-        stats_html = generate_stats_html(stats, temporal, crime_patterns, seasonal)
+        # Generate stats HTML (now includes temporal data, crime patterns, seasonal, and forecast)
+        stats_html = generate_stats_html(stats, temporal, crime_patterns, seasonal, forecast)
         
         # Generate predictions HTML
         predictions_html = generate_predictions_html(insights)
@@ -590,7 +594,7 @@ def run_crime_analysis(
         '''
         
         # Generate report HTML for display
-        report_html = generate_report_html(llm_output, stats, insights, temporal, seasonal)
+        report_html = generate_report_html(llm_output, stats, insights, temporal, seasonal, forecast)
         
         progress(1.0, desc="Complete!")
         
@@ -617,8 +621,8 @@ def run_crime_analysis(
         return error_status, "", "", "", "", None, None
 
 
-def generate_report_html(llm_output: str, stats: dict, insights: list, temporal: Optional[dict] = None, seasonal: Optional[dict] = None) -> str:
-    """Generate HTML for the analysis report display."""
+def generate_report_html(llm_output: str, stats: dict, insights: list, temporal: Optional[dict] = None, seasonal: Optional[dict] = None, forecast: Optional[dict] = None) -> str:
+    """Generate HTML for the analysis report display including forecast."""
     bounds = stats['geographic_bounds']
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
@@ -753,6 +757,50 @@ def generate_report_html(llm_output: str, stats: dict, insights: list, temporal:
         </div>
         '''
     
+    # Add forecast section if available
+    if forecast and forecast.get('has_forecast'):
+        total_pred = forecast.get('total_predicted', 0)
+        avg_daily = forecast.get('avg_daily', 0)
+        trend = forecast.get('trend', 'stable')
+        trend_pct = forecast.get('trend_pct', 0)
+        
+        html += f'''
+        <div style="margin-bottom: 1.5rem;">
+            <h3 style="color: var(--text-primary); margin: 0 0 0.75rem 0; font-size: 1.1rem;">
+                📈 Crime Forecast (Next {forecast.get('horizon_days', 14)} Days)
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Total Predicted</div>
+                    <div style="color: var(--accent-primary); font-size: 1.25rem; font-weight: 600;">{total_pred} crimes ({avg_daily}/day)</div>
+                </div>
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Trend</div>
+                    <div style="color: var(--text-primary); font-size: 1rem; font-weight: 600;">{trend.capitalize()} ({trend_pct:+.1f}%)</div>
+                </div>
+        '''
+        
+        if forecast.get('peak_day'):
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Peak Day</div>
+                    <div style="color: var(--accent-danger); font-size: 1rem; font-weight: 600;">{forecast['peak_day']} ({forecast.get('peak_count', 0)})</div>
+                </div>
+            '''
+        
+        if forecast.get('low_day'):
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Low Day</div>
+                    <div style="color: var(--accent-success); font-size: 1rem; font-weight: 600;">{forecast['low_day']} ({forecast.get('low_count', 0)})</div>
+                </div>
+            '''
+        
+        html += '''
+            </div>
+        </div>
+        '''
+    
     html += '''
         <div style="margin-bottom: 1.5rem;">
             <h3 style="color: var(--text-primary); margin: 0 0 0.75rem 0; font-size: 1.1rem;">
@@ -797,8 +845,8 @@ def generate_report_html(llm_output: str, stats: dict, insights: list, temporal:
     return html
 
 
-def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patterns: Optional[dict] = None, seasonal: Optional[dict] = None) -> str:
-    """Generate HTML for statistics display including temporal, crime-type, and seasonal patterns."""
+def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patterns: Optional[dict] = None, seasonal: Optional[dict] = None, forecast: Optional[dict] = None) -> str:
+    """Generate HTML for statistics display including temporal, crime-type, seasonal patterns, and forecast."""
     bounds = stats['geographic_bounds']
     day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     
@@ -1161,6 +1209,122 @@ def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patt
                 <div style="color: {yoy_color}; font-size: 1.1rem; font-weight: 600;">{yoy_icon} {yoy.capitalize()}</div>
             </div>
             """
+    
+    # Add Prophet forecast section if available
+    if forecast and forecast.get('has_forecast'):
+        html += f"""
+        <div class="panel-header" style="margin-top: 1.5rem;">Crime Forecast (Next {forecast.get('horizon_days', 14)} Days)</div>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+        """
+        
+        # Total predicted
+        total_pred = forecast.get('total_predicted', 0)
+        avg_daily = forecast.get('avg_daily', 0)
+        html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Total Predicted</div>
+                <div style="color: var(--accent-primary); font-size: 1.5rem; font-weight: 700;">{total_pred} crimes</div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">{avg_daily} per day avg</div>
+            </div>
+        """
+        
+        # Peak day
+        if forecast.get('peak_day'):
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Peak Day</div>
+                <div style="color: var(--accent-danger); font-size: 1rem; font-weight: 600;">📈 {forecast['peak_day']}</div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">{forecast.get('peak_count', 0)} crimes predicted</div>
+            </div>
+            """
+        
+        # Trend
+        if forecast.get('trend'):
+            trend = forecast['trend']
+            trend_pct = forecast.get('trend_pct', 0)
+            if trend == 'increasing':
+                trend_color = "var(--accent-danger)"
+                trend_icon = "📈"
+            elif trend == 'decreasing':
+                trend_color = "var(--accent-success)"
+                trend_icon = "📉"
+            else:
+                trend_color = "var(--text-primary)"
+                trend_icon = "➡️"
+            
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Forecast Trend</div>
+                <div style="color: {trend_color}; font-size: 1rem; font-weight: 600;">{trend_icon} {trend.capitalize()} ({trend_pct:+.1f}%)</div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">vs historical average</div>
+            </div>
+            """
+        
+        # Low day
+        if forecast.get('low_day'):
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Lowest Day</div>
+                <div style="color: var(--accent-success); font-size: 1rem; font-weight: 600;">📉 {forecast['low_day']}</div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">{forecast.get('low_count', 0)} crimes predicted</div>
+            </div>
+            """
+        
+        html += "</div>"
+        
+        # Daily forecast chart (simple bar visualization)
+        if forecast.get('daily_forecast'):
+            daily = forecast['daily_forecast']
+            max_count = max(d['predicted'] for d in daily) if daily else 1
+            
+            html += """
+            <div style="margin-top: 1rem;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Daily Forecast</div>
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px; overflow-x: auto;">
+                    <div style="display: flex; gap: 4px; align-items: flex-end; min-height: 100px;">
+            """
+            
+            for day_data in daily[:14]:  # Show max 14 days
+                pct_height = (day_data['predicted'] / max_count * 80) if max_count > 0 else 0
+                bar_color = "var(--accent-danger)" if day_data['predicted'] == max_count else "var(--accent-primary)"
+                day_abbrev = day_data['day_name'][:3]
+                
+                html += f"""
+                        <div style="display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 35px;">
+                            <div style="color: var(--text-primary); font-size: 0.7rem; font-weight: 600; margin-bottom: 4px;">{day_data['predicted']}</div>
+                            <div style="width: 100%; height: {pct_height}px; background: {bar_color}; border-radius: 4px 4px 0 0; min-height: 4px;"></div>
+                            <div style="color: var(--text-muted); font-size: 0.65rem; margin-top: 4px;">{day_abbrev}</div>
+                        </div>
+                """
+            
+            html += """
+                    </div>
+                </div>
+            </div>
+            """
+        
+        # Forecast by crime type
+        if forecast.get('by_crime_type'):
+            html += """
+            <div style="margin-top: 1rem;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Forecast by Crime Type</div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            """
+            
+            for crime_type, data in forecast['by_crime_type'].items():
+                pct = data.get('pct_of_total', 0)
+                predicted = data.get('predicted', 0)
+                html += f"""
+                    <div style="display: flex; align-items: center; gap: 1rem; background: var(--bg-elevated); padding: 0.75rem; border-radius: 8px;">
+                        <div style="min-width: 120px; color: var(--text-primary); font-weight: 600;">{crime_type[:18]}</div>
+                        <div style="flex: 1; background: var(--bg-tertiary); border-radius: 4px; height: 20px; overflow: hidden;">
+                            <div style="width: {pct}%; height: 100%; background: var(--accent-primary);"></div>
+                        </div>
+                        <div style="min-width: 80px; text-align: right; color: var(--text-secondary); font-size: 0.875rem;">{predicted} ({pct}%)</div>
+                    </div>
+                """
+            
+            html += "</div></div>"
     
     html += "</div>"
     

@@ -24,6 +24,7 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 ### AI-Powered Analysis
 - **Statistical Preprocessing** - Computes crime distribution, geographic hotspots, and patterns
 - **Intelligent Predictions** - Uses Ministral-3:3b model for context-aware crime prediction
+- **Prophet Forecasting** - Time-series prediction of future crime counts with confidence intervals
 - **DBSCAN Hotspot Detection** - Identifies natural crime clusters using density-based spatial clustering
 - **Seasonal Intelligence** - AI considers holiday effects, payday patterns, and seasonal trends
 - **Crime-Type Intelligence** - AI learns when specific crime types typically occur for targeted predictions
@@ -62,6 +63,16 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Noise Filtering** - Automatically excludes isolated incidents as noise
 - **Haversine Distance** - Uses accurate geographic distance calculations
 
+### Prophet Forecasting
+- **Time-Series Prediction** - Uses Facebook Prophet to forecast future crime counts
+- **14-Day Forecast** - Predicts daily crime counts for the next two weeks
+- **Confidence Intervals** - Each prediction includes upper/lower bounds (80% confidence)
+- **Peak Day Detection** - Identifies which future days will have the highest crime
+- **Trend Analysis** - Compares forecast to historical average (increasing/decreasing/stable)
+- **Per-Crime-Type Forecast** - Breaks down predictions by crime category
+- **Holiday Awareness** - Prophet automatically adjusts for US holidays
+- **Visual Chart** - Interactive bar chart showing daily forecast
+
 ### Interactive Visualization
 - **Embedded Map View** - Interactive Folium map displayed directly in the UI
 - **Heatmap Layer** - Crime density visualization with gradient coloring
@@ -70,9 +81,9 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Legend** - Clear identification of actual vs. predicted crimes
 
 ### Analysis Results
-- **Statistics Tab** - Crime distribution, temporal patterns, seasonal patterns, recency indicators, and crime-specific timing
+- **Statistics Tab** - Crime distribution, temporal patterns, seasonal patterns, forecast chart, and recency indicators
 - **Predictions Tab** - Scrollable table with location, type, risk levels, and full analysis
-- **Full Report Tab** - Complete analysis summary with temporal, seasonal insights, and AI output
+- **Full Report Tab** - Complete analysis summary with temporal, seasonal, forecast insights, and AI output
 - **Export Options** - Download interactive map (HTML) and full report (TXT)
 
 ## Table of Contents
@@ -225,6 +236,7 @@ OLLAMA_MODEL = "your-preferred-model"
 
 ### Adjust Analysis Parameters
 
+- **Prophet Forecasting**: Modify `periods` (default: 14 days) in `compute_crime_forecast()`
 - **DBSCAN Clustering**: Modify `eps_km` (default: 0.5km) and `min_samples` (default: 3) in `detect_hotspots()`
 - **Seasonal Patterns**: Adjust `compute_seasonal_patterns()` for holiday proximity and payday analysis
 - **Trend Detection**: Customize hotspot trend thresholds in `detect_hotspots()` (growth/shrinkage sensitivity)
@@ -277,6 +289,28 @@ The system analyzes several calendar-based patterns:
 
 Holiday proximity is calculated for: New Year's Day, MLK Day, Presidents Day, Memorial Day, July 4th, Labor Day, Columbus Day, Veterans Day, Thanksgiving, Christmas, and New Year's Eve.
 
+### Prophet Forecasting Parameters
+
+The system uses Facebook Prophet for time-series crime forecasting:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `periods` | 14 | Number of days to forecast ahead |
+| `yearly_seasonality` | Auto | Enabled if 365+ days of data |
+| `weekly_seasonality` | True | Detects day-of-week patterns |
+| `interval_width` | 0.80 | Confidence interval (80%) |
+
+**Minimum data requirements:**
+- At least 14 days of historical data
+- Date column must be present and parseable
+- More data = better seasonality detection
+
+**Forecast outputs:**
+- Daily crime count predictions with confidence intervals
+- Peak/low day identification
+- Trend comparison vs historical average
+- Per-crime-type breakdown
+
 ### Hotspot Trend Classification
 
 The system analyzes incident patterns over time to classify each hotspot's momentum:
@@ -313,6 +347,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[Folium](https://github.com/python-visualization/folium)** - Interactive map visualization
 - **[Pandas](https://pandas.pydata.org/)** - Data analysis and manipulation
 - **[Scikit-learn](https://scikit-learn.org/)** - DBSCAN clustering algorithm
+- **[Prophet](https://facebook.github.io/prophet/)** - Time-series forecasting (Meta)
 - **[Gradio](https://gradio.app)** - Web interface framework
 - **[Ollama](https://ollama.ai)** - Local AI model runtime
 - **[Mistral AI](https://mistral.ai)** - Ministral-3:3b language model

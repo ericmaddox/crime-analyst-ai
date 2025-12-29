@@ -17,6 +17,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from collections import Counter
 from datetime import datetime, timedelta
 from sklearn.cluster import DBSCAN
+from prophet import Prophet
 
 # US Federal Holidays (month, day) - used for holiday proximity analysis
 US_HOLIDAYS = [
@@ -674,6 +675,175 @@ def compute_seasonal_patterns(df: pd.DataFrame) -> Dict[str, Any]:
     return seasonal
 
 
+def compute_crime_forecast(df: pd.DataFrame, periods: int = 14) -> Dict[str, Any]:
+    """
+    Forecast future crime counts using Facebook Prophet.
+    Provides predictions with confidence intervals for the next N days.
+    
+    Args:
+        df: DataFrame with 'Date' column (parsed as datetime)
+        periods: Number of days to forecast (default 14)
+        
+    Returns:
+        Dictionary containing forecast data and insights
+    """
+    forecast_result = {
+        'has_forecast': False,
+        'model': 'prophet',
+        'horizon_days': periods,
+        'daily_forecast': [],
+        'total_predicted': 0,
+        'avg_daily': 0,
+        'peak_day': None,
+        'peak_count': 0,
+        'low_day': None,
+        'low_count': 0,
+        'trend': None,
+        'trend_pct': 0,
+        'weekly_pattern': {},
+        'by_crime_type': {},
+        'confidence_level': 0.80
+    }
+    
+    if 'Date' not in df.columns or df['Date'].isna().all():
+        logging.info("No date data available for forecasting")
+        return forecast_result
+    
+    valid_df = df.dropna(subset=['Date']).copy()
+    
+    # Need at least 14 days of data for meaningful forecast
+    date_range = (valid_df['Date'].max() - valid_df['Date'].min()).days
+    if len(valid_df) < 14 or date_range < 14:
+        logging.info(f"Insufficient data for forecasting: {len(valid_df)} records over {date_range} days")
+        return forecast_result
+    
+    try:
+        # Aggregate crimes by day for Prophet
+        daily_counts = valid_df.groupby(valid_df['Date'].dt.date).size().reset_index()
+        daily_counts.columns = ['ds', 'y']
+        daily_counts['ds'] = pd.to_datetime(daily_counts['ds'])
+        
+        # Fill missing dates with zeros
+        date_range_full = pd.date_range(start=daily_counts['ds'].min(), end=daily_counts['ds'].max(), freq='D')
+        daily_counts = daily_counts.set_index('ds').reindex(date_range_full, fill_value=0).reset_index()
+        daily_counts.columns = ['ds', 'y']
+        
+        # Need at least 2 data points
+        if len(daily_counts) < 2:
+            logging.info("Not enough daily data points for forecasting")
+            return forecast_result
+        
+        # Create and fit Prophet model
+        model = Prophet(
+            yearly_seasonality=len(daily_counts) >= 365,  # Only if we have a year of data
+            weekly_seasonality=True,
+            daily_seasonality=False,
+            seasonality_mode='multiplicative',
+            interval_width=0.80
+        )
+        
+        # Add US holidays
+        model.add_country_holidays(country_name='US')
+        
+        # Suppress Prophet's verbose output
+        model.fit(daily_counts)
+        
+        # Create future dataframe and predict
+        future = model.make_future_dataframe(periods=periods)
+        prophet_forecast = model.predict(future)
+        
+        # Extract forecast for future dates only
+        last_date = daily_counts['ds'].max()
+        future_forecast = prophet_forecast[prophet_forecast['ds'] > last_date].copy()
+        
+        if len(future_forecast) == 0:
+            logging.info("No future dates in forecast")
+            return forecast_result
+        
+        forecast_result['has_forecast'] = True
+        
+        # Build daily forecast
+        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        for _, row in future_forecast.iterrows():
+            predicted = max(0, round(row['yhat']))  # Can't have negative crimes
+            lower = max(0, round(row['yhat_lower']))
+            upper = max(0, round(row['yhat_upper']))
+            
+            forecast_result['daily_forecast'].append({
+                'date': row['ds'].strftime('%Y-%m-%d'),
+                'day_name': day_names[row['ds'].weekday()],
+                'predicted': predicted,
+                'lower': lower,
+                'upper': upper
+            })
+        
+        # Calculate summary statistics
+        predictions = [d['predicted'] for d in forecast_result['daily_forecast']]
+        forecast_result['total_predicted'] = sum(predictions)
+        forecast_result['avg_daily'] = round(sum(predictions) / len(predictions), 1)
+        
+        # Find peak and low days
+        max_idx = predictions.index(max(predictions))
+        min_idx = predictions.index(min(predictions))
+        
+        peak_day_data = forecast_result['daily_forecast'][max_idx]
+        low_day_data = forecast_result['daily_forecast'][min_idx]
+        
+        forecast_result['peak_day'] = f"{peak_day_data['day_name']}, {peak_day_data['date']}"
+        forecast_result['peak_count'] = peak_day_data['predicted']
+        forecast_result['low_day'] = f"{low_day_data['day_name']}, {low_day_data['date']}"
+        forecast_result['low_count'] = low_day_data['predicted']
+        
+        # Calculate weekly pattern from the forecast
+        weekly_totals = {}
+        for day_data in forecast_result['daily_forecast']:
+            day_name = day_data['day_name']
+            if day_name not in weekly_totals:
+                weekly_totals[day_name] = []
+            weekly_totals[day_name].append(day_data['predicted'])
+        
+        for day_name, counts in weekly_totals.items():
+            forecast_result['weekly_pattern'][day_name] = round(sum(counts) / len(counts), 1)
+        
+        # Calculate trend (compare forecast avg to historical avg)
+        historical_avg = daily_counts['y'].mean()
+        forecast_avg = forecast_result['avg_daily']
+        
+        if historical_avg > 0:
+            trend_pct = ((forecast_avg - historical_avg) / historical_avg) * 100
+            forecast_result['trend_pct'] = round(trend_pct, 1)
+            
+            if trend_pct > 10:
+                forecast_result['trend'] = 'increasing'
+            elif trend_pct < -10:
+                forecast_result['trend'] = 'decreasing'
+            else:
+                forecast_result['trend'] = 'stable'
+        
+        # Forecast by crime type (top 3)
+        if 'CrimeType' in valid_df.columns:
+            top_crimes = valid_df['CrimeType'].value_counts().head(3).index.tolist()
+            total_crimes = len(valid_df)
+            
+            for crime_type in top_crimes:
+                crime_pct = len(valid_df[valid_df['CrimeType'] == crime_type]) / total_crimes
+                predicted_for_type = round(forecast_result['total_predicted'] * crime_pct)
+                forecast_result['by_crime_type'][str(crime_type)] = {
+                    'predicted': predicted_for_type,
+                    'pct_of_total': round(crime_pct * 100, 1)
+                }
+        
+        logging.info(f"Prophet forecast: {forecast_result['total_predicted']} crimes predicted over {periods} days, "
+                     f"trend: {forecast_result['trend']} ({forecast_result['trend_pct']:+.1f}%)")
+        
+    except Exception as e:
+        logging.warning(f"Prophet forecasting failed: {e}")
+        return forecast_result
+    
+    return forecast_result
+
+
 def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights: bool = True,
                     eps_km: float = 0.5, min_samples: int = 3) -> List[Dict[str, Any]]:
     """
@@ -889,7 +1059,8 @@ def build_analysis_prompt(
     hotspots: List[Dict],
     temporal: Optional[Dict] = None,
     crime_patterns: Optional[Dict[str, Dict]] = None,
-    seasonal: Optional[Dict] = None
+    seasonal: Optional[Dict] = None,
+    forecast: Optional[Dict] = None
 ) -> str:
     """
     Build a context-rich prompt for the LLM based on crime statistics.
@@ -900,6 +1071,7 @@ def build_analysis_prompt(
         temporal: Optional temporal patterns dictionary
         crime_patterns: Optional per-crime-type temporal patterns
         seasonal: Optional seasonal patterns dictionary
+        forecast: Optional Prophet forecast dictionary
         
     Returns:
         Formatted prompt string for the LLM
@@ -1022,6 +1194,33 @@ def build_analysis_prompt(
         
         if seasonal.get('year_over_year'):
             prompt += f"- Year-over-year trend: {seasonal['year_over_year']}\n"
+    
+    # Add Prophet forecast section if available
+    if forecast and forecast.get('has_forecast'):
+        prompt += f"\n**Crime Forecast (Next {forecast.get('horizon_days', 14)} Days - Prophet Model):**\n"
+        prompt += f"- Total predicted: {forecast.get('total_predicted', 0)} incidents\n"
+        prompt += f"- Daily average: {forecast.get('avg_daily', 0)} crimes/day\n"
+        
+        if forecast.get('peak_day'):
+            prompt += f"- Peak day: {forecast['peak_day']} ({forecast.get('peak_count', 0)} predicted)\n"
+        
+        if forecast.get('low_day'):
+            prompt += f"- Lowest day: {forecast['low_day']} ({forecast.get('low_count', 0)} predicted)\n"
+        
+        if forecast.get('trend'):
+            trend = forecast['trend']
+            trend_pct = forecast.get('trend_pct', 0)
+            if trend == 'increasing':
+                prompt += f"- Forecast trend: INCREASING ({trend_pct:+.1f}% vs historical average)\n"
+            elif trend == 'decreasing':
+                prompt += f"- Forecast trend: DECREASING ({trend_pct:+.1f}% vs historical average)\n"
+            else:
+                prompt += f"- Forecast trend: Stable ({trend_pct:+.1f}% vs historical average)\n"
+        
+        if forecast.get('by_crime_type'):
+            prompt += "- Forecast by type: "
+            type_parts = [f"{ct} ({data['predicted']})" for ct, data in list(forecast['by_crime_type'].items())[:3]]
+            prompt += ", ".join(type_parts) + "\n"
     
     # Enhanced hotspot section with temporal, recency, and trend context
     prompt += "\n**Identified Hotspot Areas (DBSCAN clusters, ranked by recency-weighted activity):**\n"
@@ -1386,7 +1585,7 @@ def run_analysis(
     type_col: str = 'CrimeType',
     date_col: Optional[str] = None,
     time_col: Optional[str] = None
-) -> Tuple[Dict, List[Dict], str, str, Optional[Dict], Optional[Dict]]:
+) -> Tuple[Dict, List[Dict], str, str, Optional[Dict], Optional[Dict], Optional[Dict]]:
     """
     Run the complete crime analysis pipeline.
     
@@ -1399,7 +1598,7 @@ def run_analysis(
         time_col: Optional name of time column for temporal analysis
         
     Returns:
-        Tuple of (statistics, predictions, map_path, report_path, temporal_patterns, seasonal_patterns)
+        Tuple of (statistics, predictions, map_path, report_path, temporal_patterns, seasonal_patterns, forecast)
     """
     # Validate and normalize data (including temporal columns if provided)
     df = validate_columns(df, lat_col, lon_col, type_col, date_col, time_col)
@@ -1416,11 +1615,14 @@ def run_analysis(
     # Compute seasonal patterns (holidays, paydays, etc.)
     seasonal = compute_seasonal_patterns(df)
     
+    # Compute crime forecast using Prophet
+    forecast = compute_crime_forecast(df)
+    
     # Detect hotspots using DBSCAN (includes temporal context and trends per hotspot)
     hotspots = detect_hotspots(df)
     
-    # Build prompt with temporal context, crime patterns, seasonal, and query LLM
-    prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns, seasonal)
+    # Build prompt with temporal context, crime patterns, seasonal, forecast, and query LLM
+    prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns, seasonal, forecast)
     logging.info("Querying LLM for predictions...")
     
     llm_output = run_ollama_predictive_model(prompt)
@@ -1449,7 +1651,7 @@ def run_analysis(
     map_path = create_crime_map(df, insights, stats)
     report_path = save_analysis_report(llm_output, stats, insights)
     
-    return stats, insights, map_path, report_path, temporal, seasonal
+    return stats, insights, map_path, report_path, temporal, seasonal, forecast
 
 
 def main():
@@ -1464,7 +1666,7 @@ def main():
     try:
         df = read_crime_data(str(sample_file))
         # Use temporal columns if available in sample data
-        stats, insights, map_path, report_path, temporal, seasonal = run_analysis(
+        stats, insights, map_path, report_path, temporal, seasonal, forecast = run_analysis(
             df,
             date_col='Date' if 'Date' in df.columns else None,
             time_col='Time' if 'Time' in df.columns else None
@@ -1491,6 +1693,15 @@ def main():
                 print(f"  - Dominant season: {seasonal['dominant_season']}")
             if seasonal.get('holiday_spike'):
                 print(f"  - Holiday effect: {seasonal['holiday_spike']}")
+        
+        if forecast and forecast.get('has_forecast'):
+            print(f"\nCrime Forecast (Next {forecast.get('horizon_days', 14)} Days):")
+            print(f"  - Total predicted: {forecast.get('total_predicted', 0)} crimes")
+            print(f"  - Daily average: {forecast.get('avg_daily', 0)}")
+            if forecast.get('peak_day'):
+                print(f"  - Peak day: {forecast['peak_day']} ({forecast.get('peak_count', 0)} predicted)")
+            if forecast.get('trend'):
+                print(f"  - Trend: {forecast['trend']} ({forecast.get('trend_pct', 0):+.1f}%)")
         
         print(f"\nOutputs:")
         print(f"  - Map: {map_path}")
