@@ -19,6 +19,7 @@ from src.crime_analyst_ai.core import (
     validate_columns,
     compute_crime_statistics,
     compute_temporal_patterns,
+    compute_crime_type_patterns,
     detect_hotspots,
     build_analysis_prompt,
     run_ollama_predictive_model,
@@ -523,11 +524,14 @@ def run_crime_analysis(
         progress(0.25, desc="Analyzing temporal patterns...")
         temporal = compute_temporal_patterns(df_validated)
         
+        progress(0.28, desc="Analyzing crime-type patterns...")
+        crime_patterns = compute_crime_type_patterns(df_validated)
+        
         progress(0.3, desc="Detecting hotspots...")
         hotspots = detect_hotspots(df_validated)
         
         progress(0.4, desc="Building analysis prompt...")
-        prompt = build_analysis_prompt(stats, hotspots, temporal)
+        prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns)
         
         progress(0.5, desc=f"Querying {OLLAMA_MODEL}...")
         llm_output = run_ollama_predictive_model(prompt)
@@ -556,8 +560,8 @@ def run_crime_analysis(
         progress(0.9, desc="Creating report...")
         report_file = save_analysis_report(llm_output, stats, insights)
         
-        # Generate stats HTML (now includes temporal data)
-        stats_html = generate_stats_html(stats, temporal)
+        # Generate stats HTML (now includes temporal data and crime patterns)
+        stats_html = generate_stats_html(stats, temporal, crime_patterns)
         
         # Generate predictions HTML
         predictions_html = generate_predictions_html(insights)
@@ -737,8 +741,8 @@ def generate_report_html(llm_output: str, stats: dict, insights: list, temporal:
     return html
 
 
-def generate_stats_html(stats: dict, temporal: Optional[dict] = None) -> str:
-    """Generate HTML for statistics display including temporal patterns."""
+def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patterns: Optional[dict] = None) -> str:
+    """Generate HTML for statistics display including temporal and crime-type patterns."""
     bounds = stats['geographic_bounds']
     day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     
@@ -922,6 +926,57 @@ def generate_stats_html(stats: dict, temporal: Optional[dict] = None) -> str:
                 </div>
             </div>
             """
+    
+    # Add crime-type specific patterns if available
+    if crime_patterns:
+        html += """
+        <div class="panel-header" style="margin-top: 1.5rem;">Crime-Type Timing Patterns</div>
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+        """
+        
+        for crime_type, pattern in list(crime_patterns.items())[:5]:
+            # Build timing description
+            timing_parts = []
+            
+            if pattern.get('peak_hours'):
+                peak_hour = pattern['peak_hours'][0]
+                timing_parts.append(f"peaks at {peak_hour}:00")
+            
+            if pattern.get('peak_period'):
+                timing_parts.append(f"{pattern['peak_period']}")
+            
+            if pattern.get('weekend_vs_weekday') == 'weekend':
+                timing_parts.append("weekends")
+            elif pattern.get('weekend_vs_weekday') == 'weekday':
+                timing_parts.append("weekdays")
+            
+            timing_str = ' | '.join(timing_parts) if timing_parts else 'No pattern detected'
+            
+            # Determine color based on period
+            period_colors = {
+                'morning': '#f59e0b',
+                'afternoon': '#3b82f6',
+                'evening': '#8b5cf6',
+                'night': '#1e293b'
+            }
+            period = pattern.get('peak_period', 'afternoon')
+            color = period_colors.get(period, '#64748b')
+            
+            html += f"""
+            <div style="display: flex; align-items: center; gap: 1rem; background: var(--bg-elevated); padding: 0.75rem; border-radius: 8px; border-left: 4px solid {color};">
+                <div style="min-width: 120px; color: var(--text-primary); font-weight: 600;">
+                    {crime_type[:18]}
+                </div>
+                <div style="flex: 1; color: var(--text-secondary); font-size: 0.875rem;">
+                    {timing_str}
+                </div>
+                <div style="color: var(--text-muted); font-size: 0.8rem;">
+                    {pattern.get('count', 0)} incidents
+                </div>
+            </div>
+            """
+        
+        html += "</div>"
     
     html += "</div>"
     

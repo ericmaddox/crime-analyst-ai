@@ -24,7 +24,8 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 ### AI-Powered Analysis
 - **Statistical Preprocessing** - Computes crime distribution, geographic hotspots, and patterns
 - **Intelligent Predictions** - Uses Ministral-3:3b model for context-aware crime prediction
-- **Hotspot Detection** - Identifies high-crime areas using density-based clustering
+- **Hotspot Detection** - Identifies high-crime areas using density-based clustering with trend analysis
+- **Crime-Type Intelligence** - AI learns when specific crime types typically occur for targeted predictions
 - **Validation** - Ensures predictions are geographically plausible
 
 ### Temporal Analysis
@@ -32,12 +33,19 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Day-of-Week Analysis** - Detects which days have the highest crime activity
 - **Trend Detection** - Determines if crime is rising, falling, or stable over time
 - **Per-Hotspot Timing** - Each hotspot shows its own peak hours and days
+- **Crime-Specific Patterns** - Analyzes when each crime type typically occurs (e.g., thefts peak at 2 PM on Fridays)
 
 ### Recency Weighting
 - **Exponential Decay** - Recent crimes weighted more heavily than older data (30-day half-life)
 - **Emerging Hotspots** - Automatically flags areas with recent activity spikes
 - **Recency Score** - Visual indicator showing how recent your data is (0-100 scale)
 - **Smart Ranking** - Hotspots ranked by recency-weighted activity, not just raw counts
+
+### Hotspot Trend Detection
+- **Trend Analysis** - Each hotspot classified as Growing, Shrinking, Stable, or New
+- **Historical Comparison** - Compares first-half vs second-half incident counts to detect momentum
+- **Visual Indicators** - Clear trend labels (📈 Growing, 📉 Shrinking, ➡️ Stable, 🆕 New)
+- **LLM Context** - Trend data fed to AI for smarter, momentum-aware predictions
 
 ### Interactive Visualization
 - **Embedded Map View** - Interactive Folium map displayed directly in the UI
@@ -47,9 +55,9 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Legend** - Clear identification of actual vs. predicted crimes
 
 ### Analysis Results
-- **Statistics Tab** - Crime distribution, temporal patterns, and recency indicators
+- **Statistics Tab** - Crime distribution, temporal patterns, recency indicators, hotspot trends, and crime-specific timing
 - **Predictions Tab** - Scrollable table with location, type, risk levels, and full analysis
-- **Full Report Tab** - Complete analysis summary with temporal insights and AI output
+- **Full Report Tab** - Complete analysis summary with temporal insights, trend data, and AI output
 - **Export Options** - Download interactive map (HTML) and full report (TXT)
 
 ## Table of Contents
@@ -203,6 +211,8 @@ OLLAMA_MODEL = "your-preferred-model"
 ### Adjust Analysis Parameters
 
 - **Hotspot Detection**: Modify `detect_hotspots()` in `core.py`
+- **Trend Detection**: Customize hotspot trend thresholds in `detect_hotspots()` (growth/shrinkage sensitivity)
+- **Crime-Type Patterns**: Adjust `compute_crime_type_patterns()` for per-type temporal analysis
 - **LLM Prompt**: Customize `build_analysis_prompt()` in `core.py`
 - **Map Styling**: Edit `create_crime_map()` in `core.py`
 - **Recency Half-Life**: Change the `half_life_days` parameter in `compute_recency_weights()` (default: 30 days)
@@ -223,6 +233,19 @@ weight = 0.5^(days_ago / half_life_days)
 | 90 days | 0.125 |
 
 Adjust `half_life_days` in `compute_recency_weights()` to change decay rate.
+
+### Hotspot Trend Classification
+
+The system analyzes incident patterns over time to classify each hotspot's momentum:
+
+| Trend | Condition | Meaning |
+|-------|-----------|---------|
+| 📈 Growing | Second-half incidents > first-half by 20%+ | Crime increasing in this area |
+| 📉 Shrinking | Second-half incidents < first-half by 20%+ | Crime decreasing in this area |
+| ➡️ Stable | Change within ±20% | Consistent crime levels |
+| 🆕 New | All incidents in second half | Recently emerged hotspot |
+
+This trend data is passed to the AI model for momentum-aware predictions.
 
 ### UI Customization
 

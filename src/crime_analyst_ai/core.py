@@ -306,6 +306,87 @@ def compute_temporal_patterns(df: pd.DataFrame) -> Dict[str, Any]:
     return patterns
 
 
+def compute_crime_type_patterns(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+    """
+    Analyze temporal patterns for each crime type separately.
+    Different crimes occur at different times (e.g., burglaries during work hours,
+    assaults late at night).
+    
+    Args:
+        df: DataFrame with CrimeType and optional Hour, DayOfWeek columns
+        
+    Returns:
+        Dictionary mapping crime types to their temporal patterns
+    """
+    crime_patterns = {}
+    
+    has_hours = 'Hour' in df.columns and df['Hour'].notna().any()
+    has_days = 'DayOfWeek' in df.columns and df['DayOfWeek'].notna().any()
+    
+    if not has_hours and not has_days:
+        logging.info("No temporal data available for crime-type pattern analysis")
+        return crime_patterns
+    
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    
+    # Get top crime types (limit to top 5 for performance)
+    top_crimes = df['CrimeType'].value_counts().head(5).index.tolist()
+    
+    for crime_type in top_crimes:
+        crime_df = df[df['CrimeType'] == crime_type]
+        
+        pattern = {
+            'count': len(crime_df),
+            'peak_hours': [],
+            'peak_days': [],
+            'peak_period': None,
+            'weekend_vs_weekday': None
+        }
+        
+        # Analyze hours for this crime type
+        if has_hours:
+            crime_hours = crime_df['Hour'].dropna()
+            if len(crime_hours) > 0:
+                hour_counts = crime_hours.value_counts()
+                pattern['peak_hours'] = [int(h) for h in hour_counts.head(2).index.tolist()]
+                
+                # Determine peak period
+                morning = len(crime_df[(crime_df['Hour'] >= 6) & (crime_df['Hour'] < 12)])
+                afternoon = len(crime_df[(crime_df['Hour'] >= 12) & (crime_df['Hour'] < 18)])
+                evening = len(crime_df[(crime_df['Hour'] >= 18) & (crime_df['Hour'] < 22)])
+                night = len(crime_df[(crime_df['Hour'] >= 22) | (crime_df['Hour'] < 6)])
+                
+                periods = {'morning': morning, 'afternoon': afternoon, 'evening': evening, 'night': night}
+                pattern['peak_period'] = max(periods, key=periods.get)
+        
+        # Analyze days for this crime type
+        if has_days:
+            crime_days = crime_df['DayOfWeek'].dropna()
+            if len(crime_days) > 0:
+                day_counts = crime_days.value_counts()
+                pattern['peak_days'] = [int(d) for d in day_counts.head(2).index.tolist()]
+                
+                # Weekend vs weekday comparison
+                weekday_count = len(crime_df[crime_df['DayOfWeek'] < 5])
+                weekend_count = len(crime_df[crime_df['DayOfWeek'] >= 5])
+                
+                # Normalize by number of days (5 weekdays vs 2 weekend days)
+                weekday_avg = weekday_count / 5 if weekday_count > 0 else 0
+                weekend_avg = weekend_count / 2 if weekend_count > 0 else 0
+                
+                if weekend_avg > weekday_avg * 1.2:
+                    pattern['weekend_vs_weekday'] = 'weekend'
+                elif weekday_avg > weekend_avg * 1.2:
+                    pattern['weekend_vs_weekday'] = 'weekday'
+                else:
+                    pattern['weekend_vs_weekday'] = 'balanced'
+        
+        crime_patterns[str(crime_type)] = pattern
+    
+    logging.info(f"Computed temporal patterns for {len(crime_patterns)} crime types")
+    return crime_patterns
+
+
 def compute_recency_weights(df: pd.DataFrame, half_life_days: int = 30) -> pd.Series:
     """
     Compute recency weights for each crime record using exponential decay.
@@ -466,17 +547,48 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights:
         # Get crime breakdown for this cell
         cell_crimes = cell_df['CrimeType'].value_counts().head(3).to_dict()
         
-        # Calculate recency score for this hotspot
+        # Calculate recency score and trend for this hotspot
         hotspot_recency_score = None
         recent_incident_count = 0
+        older_incident_count = 0
+        hotspot_trend = None
+        
         if has_recency and 'Date' in cell_df.columns:
             cell_dates = cell_df.dropna(subset=['Date'])
             if len(cell_dates) > 0:
                 max_date = df_copy['Date'].max()
                 days_ago = (max_date - cell_dates['Date']).dt.days
+                
+                # Count recent (last 30 days) vs older (30-90 days ago) incidents
                 recent_incident_count = int((days_ago <= 30).sum())
+                older_incident_count = int(((days_ago > 30) & (days_ago <= 90)).sum())
+                very_old_count = int((days_ago > 90).sum())
+                
                 # Recency score: average weight of crimes in this cell
                 hotspot_recency_score = round(cell_df['recency_weight'].mean() * 100, 1)
+                
+                # Determine hotspot trend
+                total_older = older_incident_count + very_old_count
+                
+                if total_older == 0 and recent_incident_count > 0:
+                    # All activity is recent - this is a NEW hotspot
+                    hotspot_trend = 'new'
+                elif recent_incident_count > 0 and older_incident_count > 0:
+                    # Compare recent to older (normalize by time period)
+                    # Recent = 30 days, older = 60 days, so multiply recent by 2 for fair comparison
+                    recent_rate = recent_incident_count
+                    older_rate = older_incident_count / 2  # Normalize 60 days to 30 days
+                    
+                    if recent_rate > older_rate * 1.5:
+                        hotspot_trend = 'growing'
+                    elif recent_rate < older_rate * 0.5:
+                        hotspot_trend = 'shrinking'
+                    else:
+                        hotspot_trend = 'stable'
+                elif recent_incident_count == 0 and total_older > 0:
+                    hotspot_trend = 'inactive'
+                else:
+                    hotspot_trend = 'stable'
         
         hotspot = {
             'latitude': float(row['lat']),
@@ -489,10 +601,12 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights:
             'peak_hours': None,
             'peak_days': None,
             'temporal_pattern': None,
-            # Recency context for this hotspot
+            # Recency and trend context for this hotspot
             'recency_score': hotspot_recency_score,
             'recent_incidents': recent_incident_count,
-            'is_emerging': hotspot_recency_score is not None and hotspot_recency_score >= 70
+            'older_incidents': older_incident_count,
+            'trend': hotspot_trend,
+            'is_emerging': hotspot_trend in ['new', 'growing']
         }
         
         # Extract temporal patterns for this specific hotspot
@@ -527,7 +641,8 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights:
 def build_analysis_prompt(
     stats: Dict,
     hotspots: List[Dict],
-    temporal: Optional[Dict] = None
+    temporal: Optional[Dict] = None,
+    crime_patterns: Optional[Dict[str, Dict]] = None
 ) -> str:
     """
     Build a context-rich prompt for the LLM based on crime statistics.
@@ -536,6 +651,7 @@ def build_analysis_prompt(
         stats: Crime statistics dictionary
         hotspots: List of detected hotspots
         temporal: Optional temporal patterns dictionary
+        crime_patterns: Optional per-crime-type temporal patterns
         
     Returns:
         Formatted prompt string for the LLM
@@ -603,21 +719,49 @@ def build_analysis_prompt(
             change = temporal.get('trend_change_pct', 0)
             prompt += f"- Recent trend: {trend.capitalize()} ({change:+.1f}% change)\n"
     
-    # Enhanced hotspot section with temporal and recency context
+    # Add per-crime-type temporal patterns if available
+    if crime_patterns:
+        prompt += "\n**Crime-Specific Timing Patterns:**\n"
+        for crime_type, pattern in list(crime_patterns.items())[:5]:
+            timing_info = []
+            
+            if pattern.get('peak_hours'):
+                timing_info.append(f"peaks at {pattern['peak_hours'][0]}:00")
+            
+            if pattern.get('peak_period'):
+                timing_info.append(f"{pattern['peak_period']} activity")
+            
+            if pattern.get('weekend_vs_weekday') == 'weekend':
+                timing_info.append("more common on weekends")
+            elif pattern.get('weekend_vs_weekday') == 'weekday':
+                timing_info.append("more common on weekdays")
+            
+            if timing_info:
+                prompt += f"- {crime_type}: {', '.join(timing_info)}\n"
+    
+    # Enhanced hotspot section with temporal, recency, and trend context
     prompt += "\n**Identified Hotspot Areas (ranked by recency-weighted activity):**\n"
     for i, hotspot in enumerate(hotspots[:5], 1):
         prompt += f"{i}. Location ({hotspot['latitude']:.4f}, {hotspot['longitude']:.4f}): "
         prompt += f"{hotspot['incident_count']} incidents, primarily {hotspot['dominant_crime']}"
         
-        # Add recency and temporal context for this hotspot
+        # Add trend, recency, and temporal context for this hotspot
         context_details = []
         
-        # Recency info
-        if hotspot.get('is_emerging'):
-            context_details.append("EMERGING HOTSPOT")
-        elif hotspot.get('recency_score') is not None:
-            if hotspot['recency_score'] >= 50:
-                context_details.append(f"recent activity ({hotspot['recent_incidents']} in last 30 days)")
+        # Trend info (new feature)
+        trend = hotspot.get('trend')
+        if trend == 'new':
+            context_details.append("NEW HOTSPOT")
+        elif trend == 'growing':
+            context_details.append("GROWING")
+        elif trend == 'shrinking':
+            context_details.append("declining")
+        elif trend == 'inactive':
+            context_details.append("inactive recently")
+        
+        # Recent activity count
+        if hotspot.get('recent_incidents', 0) > 0:
+            context_details.append(f"{hotspot['recent_incidents']} in last 30 days")
         
         # Temporal info
         if hotspot.get('peak_hours'):
@@ -978,11 +1122,14 @@ def run_analysis(
     # Compute temporal patterns if temporal data is available
     temporal = compute_temporal_patterns(df)
     
-    # Detect hotspots (now includes temporal context per hotspot)
+    # Compute per-crime-type temporal patterns
+    crime_patterns = compute_crime_type_patterns(df)
+    
+    # Detect hotspots (now includes temporal context and trends per hotspot)
     hotspots = detect_hotspots(df)
     
-    # Build prompt with temporal context and query LLM
-    prompt = build_analysis_prompt(stats, hotspots, temporal)
+    # Build prompt with temporal context, crime patterns, and query LLM
+    prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns)
     logging.info("Querying LLM for predictions...")
     
     llm_output = run_ollama_predictive_model(prompt)
