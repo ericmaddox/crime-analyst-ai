@@ -15,6 +15,23 @@ import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from collections import Counter
+from datetime import datetime, timedelta
+from sklearn.cluster import DBSCAN
+
+# US Federal Holidays (month, day) - used for holiday proximity analysis
+US_HOLIDAYS = [
+    (1, 1),    # New Year's Day
+    (1, 15),   # MLK Day (approximate - 3rd Monday)
+    (2, 19),   # Presidents Day (approximate - 3rd Monday)
+    (5, 27),   # Memorial Day (approximate - last Monday)
+    (7, 4),    # Independence Day
+    (9, 2),    # Labor Day (approximate - 1st Monday)
+    (10, 14),  # Columbus Day (approximate - 2nd Monday)
+    (11, 11),  # Veterans Day
+    (11, 28),  # Thanksgiving (approximate - 4th Thursday)
+    (12, 25),  # Christmas
+    (12, 31),  # New Year's Eve
+]
 
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -493,26 +510,190 @@ def compute_recency_stats(df: pd.DataFrame) -> Dict[str, Any]:
     return recency
 
 
-def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights: bool = True) -> List[Dict[str, Any]]:
+def compute_seasonal_patterns(df: pd.DataFrame) -> Dict[str, Any]:
     """
-    Detect crime hotspots using geographic density analysis.
-    Uses a simple grid-based approach for hotspot detection.
+    Analyze seasonal and calendar-based crime patterns.
+    Detects monthly/quarterly trends, holiday effects, and payday patterns.
+    
+    Args:
+        df: DataFrame with 'Date' column (parsed as datetime)
+        
+    Returns:
+        Dictionary containing seasonal patterns and insights
+    """
+    seasonal = {
+        'has_seasonal_data': False,
+        'monthly_trend': {},           # Crime counts by month
+        'quarterly_trend': {},         # Crime counts by quarter
+        'peak_months': [],             # Top 3 months for crime
+        'peak_quarter': None,          # Highest crime quarter
+        'season_comparison': {},       # Winter/Spring/Summer/Fall breakdown
+        'dominant_season': None,       # Season with most crimes
+        'holiday_effect': {},          # Crimes near holidays vs normal days
+        'holiday_spike': None,         # Whether holidays have more crime
+        'payday_effect': {},           # Crimes near 1st/15th vs other days
+        'payday_spike': None,          # Whether paydays have more crime
+        'year_over_year': None,        # YoY trend if multi-year data
+    }
+    
+    if 'Date' not in df.columns or df['Date'].isna().all():
+        return seasonal
+    
+    valid_df = df.dropna(subset=['Date']).copy()
+    if len(valid_df) < 10:
+        return seasonal
+    
+    seasonal['has_seasonal_data'] = True
+    
+    # Extract date components
+    valid_df['Month'] = valid_df['Date'].dt.month
+    valid_df['Quarter'] = valid_df['Date'].dt.quarter
+    valid_df['DayOfMonth'] = valid_df['Date'].dt.day
+    valid_df['Year'] = valid_df['Date'].dt.year
+    
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    
+    # Monthly trend
+    monthly = valid_df['Month'].value_counts().sort_index()
+    seasonal['monthly_trend'] = {month_names[int(k)-1]: int(v) for k, v in monthly.items()}
+    seasonal['peak_months'] = [month_names[int(m)-1] for m in monthly.nlargest(3).index.tolist()]
+    
+    # Quarterly trend
+    quarterly = valid_df['Quarter'].value_counts().sort_index()
+    seasonal['quarterly_trend'] = {f"Q{int(k)}": int(v) for k, v in quarterly.items()}
+    if len(quarterly) > 0:
+        seasonal['peak_quarter'] = f"Q{int(quarterly.idxmax())}"
+    
+    # Season comparison (Northern Hemisphere)
+    winter = len(valid_df[valid_df['Month'].isin([12, 1, 2])])
+    spring = len(valid_df[valid_df['Month'].isin([3, 4, 5])])
+    summer = len(valid_df[valid_df['Month'].isin([6, 7, 8])])
+    fall = len(valid_df[valid_df['Month'].isin([9, 10, 11])])
+    
+    seasonal['season_comparison'] = {
+        'winter': winter,
+        'spring': spring,
+        'summer': summer,
+        'fall': fall
+    }
+    seasonal['dominant_season'] = max(seasonal['season_comparison'], 
+                                       key=seasonal['season_comparison'].get)
+    
+    # Holiday proximity analysis
+    def days_to_nearest_holiday(date):
+        """Calculate days to nearest US holiday in same year."""
+        if pd.isna(date):
+            return None
+        year = date.year
+        min_diff = 365
+        for month, day in US_HOLIDAYS:
+            try:
+                holiday = datetime(year, month, day)
+                diff = abs((date - holiday).days)
+                min_diff = min(min_diff, diff)
+            except ValueError:
+                continue
+        return min_diff
+    
+    valid_df['days_to_holiday'] = valid_df['Date'].apply(days_to_nearest_holiday)
+    
+    # Compare crimes within 3 days of holiday vs other days
+    near_holiday = len(valid_df[valid_df['days_to_holiday'] <= 3])
+    far_from_holiday = len(valid_df[valid_df['days_to_holiday'] > 3])
+    
+    # Normalize by number of days (roughly 11 holidays * 7 days = 77 "holiday zone" days per year)
+    total_days = (valid_df['Date'].max() - valid_df['Date'].min()).days + 1
+    holiday_days = min(77, total_days)  # ~77 days within 3 days of a holiday
+    non_holiday_days = max(1, total_days - holiday_days)
+    
+    holiday_rate = near_holiday / holiday_days if holiday_days > 0 else 0
+    non_holiday_rate = far_from_holiday / non_holiday_days if non_holiday_days > 0 else 0
+    
+    seasonal['holiday_effect'] = {
+        'near_holiday_count': near_holiday,
+        'normal_days_count': far_from_holiday,
+        'near_holiday_rate': round(holiday_rate, 2),
+        'normal_rate': round(non_holiday_rate, 2)
+    }
+    
+    if non_holiday_rate > 0:
+        ratio = holiday_rate / non_holiday_rate
+        if ratio > 1.2:
+            seasonal['holiday_spike'] = 'higher'
+        elif ratio < 0.8:
+            seasonal['holiday_spike'] = 'lower'
+        else:
+            seasonal['holiday_spike'] = 'similar'
+    
+    # Payday analysis (1st and 15th of month)
+    payday_crimes = len(valid_df[valid_df['DayOfMonth'].isin([1, 2, 15, 16])])
+    non_payday_crimes = len(valid_df[~valid_df['DayOfMonth'].isin([1, 2, 15, 16])])
+    
+    # 4 payday days per month vs ~26 non-payday days
+    payday_rate = payday_crimes / 4 if payday_crimes > 0 else 0
+    non_payday_rate = non_payday_crimes / 26 if non_payday_crimes > 0 else 0
+    
+    seasonal['payday_effect'] = {
+        'payday_count': payday_crimes,
+        'non_payday_count': non_payday_crimes,
+        'payday_rate': round(payday_rate, 2),
+        'non_payday_rate': round(non_payday_rate, 2)
+    }
+    
+    if non_payday_rate > 0:
+        ratio = payday_rate / non_payday_rate
+        if ratio > 1.2:
+            seasonal['payday_spike'] = 'higher'
+        elif ratio < 0.8:
+            seasonal['payday_spike'] = 'lower'
+        else:
+            seasonal['payday_spike'] = 'similar'
+    
+    # Year-over-year trend (if multi-year data)
+    years = valid_df['Year'].unique()
+    if len(years) >= 2:
+        yearly = valid_df['Year'].value_counts().sort_index()
+        first_year = yearly.iloc[0]
+        last_year = yearly.iloc[-1]
+        
+        if first_year > 0:
+            yoy_change = ((last_year - first_year) / first_year) * 100
+            if yoy_change > 10:
+                seasonal['year_over_year'] = f"increasing (+{yoy_change:.0f}%)"
+            elif yoy_change < -10:
+                seasonal['year_over_year'] = f"decreasing ({yoy_change:.0f}%)"
+            else:
+                seasonal['year_over_year'] = "stable"
+    
+    logging.info(f"Seasonal patterns: peak months {seasonal['peak_months']}, "
+                 f"dominant season: {seasonal['dominant_season']}, "
+                 f"holiday effect: {seasonal['holiday_spike']}, "
+                 f"payday effect: {seasonal['payday_spike']}")
+    
+    return seasonal
+
+
+def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights: bool = True,
+                    eps_km: float = 0.5, min_samples: int = 3) -> List[Dict[str, Any]]:
+    """
+    Detect crime hotspots using DBSCAN density-based clustering.
+    Identifies natural crime clusters of irregular shapes rather than grid squares.
     Includes temporal context (peak hours/days) per hotspot if available.
     Optionally uses recency weighting to prioritize recent crimes.
     
     Args:
         df: DataFrame with Latitude, Longitude, CrimeType columns
             Optional: Hour, DayOfWeek, Date columns for temporal analysis
-        n_hotspots: Number of top hotspots to return
+        n_hotspots: Maximum number of hotspots to return
         use_recency_weights: Whether to apply recency weighting (default True)
+        eps_km: DBSCAN epsilon in kilometers (default 0.5km radius)
+        min_samples: Minimum samples to form a cluster (default 3)
         
     Returns:
         List of hotspot dictionaries with location, crime info, temporal patterns, and recency
     """
-    # Round coordinates to create grid cells (approximately 0.01 degree ~ 1km)
     df_copy = df.copy()
-    df_copy['lat_grid'] = (df_copy['Latitude'] * 100).round() / 100
-    df_copy['lon_grid'] = (df_copy['Longitude'] * 100).round() / 100
     
     # Compute recency weights if date data available
     has_recency = 'Date' in df_copy.columns and df_copy['Date'].notna().any() and use_recency_weights
@@ -521,63 +702,113 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights:
     else:
         df_copy['recency_weight'] = 1.0
     
-    # Count crimes per grid cell (with weighted sum for recency-aware scoring)
-    grid_counts = df_copy.groupby(['lat_grid', 'lon_grid']).agg({
-        'CrimeType': ['count', lambda x: x.mode().iloc[0] if len(x) > 0 else 'Unknown'],
-        'recency_weight': 'sum'  # Weighted count
-    }).reset_index()
+    # Prepare coordinates for DBSCAN
+    # Convert lat/lon to radians for haversine metric
+    coords = df_copy[['Latitude', 'Longitude']].values
+    coords_radians = np.radians(coords)
     
-    grid_counts.columns = ['lat', 'lon', 'count', 'dominant_crime', 'weighted_count']
+    # DBSCAN with haversine metric
+    # eps needs to be in radians: km / earth_radius_km
+    earth_radius_km = 6371.0
+    eps_radians = eps_km / earth_radius_km
     
-    # Sort by weighted count (recency-aware) instead of raw count
-    grid_counts = grid_counts.sort_values('weighted_count', ascending=False)
+    dbscan = DBSCAN(eps=eps_radians, min_samples=min_samples, metric='haversine')
+    df_copy['cluster'] = dbscan.fit_predict(coords_radians)
+    
+    # Filter out noise points (cluster = -1)
+    clustered_df = df_copy[df_copy['cluster'] != -1]
+    
+    if len(clustered_df) == 0:
+        # Fallback: if no clusters found, use grid-based approach
+        logging.warning("DBSCAN found no clusters, falling back to grid-based detection")
+        df_copy['lat_grid'] = (df_copy['Latitude'] * 100).round() / 100
+        df_copy['lon_grid'] = (df_copy['Longitude'] * 100).round() / 100
+        grid_counts = df_copy.groupby(['lat_grid', 'lon_grid']).agg({
+            'CrimeType': 'count',
+            'recency_weight': 'sum'
+        }).reset_index()
+        grid_counts.columns = ['lat', 'lon', 'count', 'weighted_count']
+        grid_counts = grid_counts.sort_values('weighted_count', ascending=False)
+        
+        # Create simple hotspots from grid
+        hotspots = []
+        for _, row in grid_counts.head(n_hotspots).iterrows():
+            hotspots.append({
+                'latitude': float(row['lat']),
+                'longitude': float(row['lon']),
+                'incident_count': int(row['count']),
+                'weighted_score': round(float(row['weighted_count']), 2),
+                'dominant_crime': 'Unknown',
+                'crime_breakdown': {},
+                'cluster_radius_km': None,
+                'peak_hours': None,
+                'peak_days': None,
+                'temporal_pattern': None,
+                'recency_score': None,
+                'recent_incidents': 0,
+                'older_incidents': 0,
+                'trend': None,
+                'is_emerging': False,
+                'cluster_method': 'grid_fallback'
+            })
+        return hotspots
     
     # Check for temporal columns
     has_hours = 'Hour' in df_copy.columns and df_copy['Hour'].notna().any()
     has_days = 'DayOfWeek' in df_copy.columns and df_copy['DayOfWeek'].notna().any()
     
-    hotspots = []
-    for _, row in grid_counts.head(n_hotspots).iterrows():
-        # Get data for this cell
-        cell_df = df_copy[
-            (df_copy['lat_grid'] == row['lat']) & 
-            (df_copy['lon_grid'] == row['lon'])
-        ]
+    # Aggregate cluster statistics
+    cluster_stats = []
+    for cluster_id in clustered_df['cluster'].unique():
+        cluster_df = clustered_df[clustered_df['cluster'] == cluster_id]
         
-        # Get crime breakdown for this cell
-        cell_crimes = cell_df['CrimeType'].value_counts().head(3).to_dict()
+        # Cluster centroid
+        center_lat = cluster_df['Latitude'].mean()
+        center_lon = cluster_df['Longitude'].mean()
         
-        # Calculate recency score and trend for this hotspot
+        # Cluster radius (max distance from centroid in km)
+        lat_diff = np.radians(cluster_df['Latitude'] - center_lat)
+        lon_diff = np.radians(cluster_df['Longitude'] - center_lon)
+        center_lat_rad = np.radians(center_lat)
+        
+        # Haversine formula for distances
+        a = np.sin(lat_diff/2)**2 + np.cos(center_lat_rad) * np.cos(np.radians(cluster_df['Latitude'])) * np.sin(lon_diff/2)**2
+        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+        distances_km = earth_radius_km * c
+        cluster_radius = distances_km.max() if len(distances_km) > 0 else 0
+        
+        # Crime counts and types
+        incident_count = len(cluster_df)
+        weighted_score = cluster_df['recency_weight'].sum()
+        crime_counts = cluster_df['CrimeType'].value_counts()
+        dominant_crime = crime_counts.index[0] if len(crime_counts) > 0 else 'Unknown'
+        crime_breakdown = {str(k): int(v) for k, v in crime_counts.head(3).items()}
+        
+        # Recency and trend analysis
         hotspot_recency_score = None
         recent_incident_count = 0
         older_incident_count = 0
         hotspot_trend = None
         
-        if has_recency and 'Date' in cell_df.columns:
-            cell_dates = cell_df.dropna(subset=['Date'])
-            if len(cell_dates) > 0:
+        if has_recency and 'Date' in cluster_df.columns:
+            cluster_dates = cluster_df.dropna(subset=['Date'])
+            if len(cluster_dates) > 0:
                 max_date = df_copy['Date'].max()
-                days_ago = (max_date - cell_dates['Date']).dt.days
+                days_ago = (max_date - cluster_dates['Date']).dt.days
                 
-                # Count recent (last 30 days) vs older (30-90 days ago) incidents
                 recent_incident_count = int((days_ago <= 30).sum())
                 older_incident_count = int(((days_ago > 30) & (days_ago <= 90)).sum())
                 very_old_count = int((days_ago > 90).sum())
                 
-                # Recency score: average weight of crimes in this cell
-                hotspot_recency_score = round(cell_df['recency_weight'].mean() * 100, 1)
+                hotspot_recency_score = round(cluster_df['recency_weight'].mean() * 100, 1)
                 
-                # Determine hotspot trend
                 total_older = older_incident_count + very_old_count
                 
                 if total_older == 0 and recent_incident_count > 0:
-                    # All activity is recent - this is a NEW hotspot
                     hotspot_trend = 'new'
                 elif recent_incident_count > 0 and older_incident_count > 0:
-                    # Compare recent to older (normalize by time period)
-                    # Recent = 30 days, older = 60 days, so multiply recent by 2 for fair comparison
                     recent_rate = recent_incident_count
-                    older_rate = older_incident_count / 2  # Normalize 60 days to 30 days
+                    older_rate = older_incident_count / 2
                     
                     if recent_rate > older_rate * 1.5:
                         hotspot_trend = 'growing'
@@ -590,51 +821,66 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights:
                 else:
                     hotspot_trend = 'stable'
         
-        hotspot = {
-            'latitude': float(row['lat']),
-            'longitude': float(row['lon']),
-            'incident_count': int(row['count']),
-            'weighted_score': round(float(row['weighted_count']), 2),
-            'dominant_crime': str(row['dominant_crime']),
-            'crime_breakdown': {str(k): int(v) for k, v in cell_crimes.items()},
-            # Temporal context for this hotspot
-            'peak_hours': None,
-            'peak_days': None,
-            'temporal_pattern': None,
-            # Recency and trend context for this hotspot
+        # Temporal patterns for this cluster
+        peak_hours = None
+        peak_days = None
+        temporal_pattern = None
+        
+        if has_hours:
+            cluster_hours = cluster_df['Hour'].dropna()
+            if len(cluster_hours) > 0:
+                hour_counts = cluster_hours.value_counts()
+                peak_hours = [int(h) for h in hour_counts.head(2).index.tolist()]
+                
+                morning = len(cluster_df[(cluster_df['Hour'] >= 6) & (cluster_df['Hour'] < 12)])
+                afternoon = len(cluster_df[(cluster_df['Hour'] >= 12) & (cluster_df['Hour'] < 18)])
+                evening = len(cluster_df[(cluster_df['Hour'] >= 18) & (cluster_df['Hour'] < 22)])
+                night = len(cluster_df[(cluster_df['Hour'] >= 22) | (cluster_df['Hour'] < 6)])
+                
+                periods = {'morning': morning, 'afternoon': afternoon, 'evening': evening, 'night': night}
+                temporal_pattern = max(periods, key=periods.get)
+        
+        if has_days:
+            cluster_days = cluster_df['DayOfWeek'].dropna()
+            if len(cluster_days) > 0:
+                day_counts = cluster_days.value_counts()
+                peak_days = [int(d) for d in day_counts.head(2).index.tolist()]
+        
+        cluster_stats.append({
+            'cluster_id': cluster_id,
+            'latitude': round(center_lat, 6),
+            'longitude': round(center_lon, 6),
+            'incident_count': incident_count,
+            'weighted_score': round(weighted_score, 2),
+            'cluster_radius_km': round(cluster_radius, 3),
+            'dominant_crime': str(dominant_crime),
+            'crime_breakdown': crime_breakdown,
+            'peak_hours': peak_hours,
+            'peak_days': peak_days,
+            'temporal_pattern': temporal_pattern,
             'recency_score': hotspot_recency_score,
             'recent_incidents': recent_incident_count,
             'older_incidents': older_incident_count,
             'trend': hotspot_trend,
-            'is_emerging': hotspot_trend in ['new', 'growing']
-        }
-        
-        # Extract temporal patterns for this specific hotspot
-        if has_hours:
-            cell_hours = cell_df['Hour'].dropna()
-            if len(cell_hours) > 0:
-                hour_counts = cell_hours.value_counts()
-                hotspot['peak_hours'] = [int(h) for h in hour_counts.head(2).index.tolist()]
-                
-                # Determine time period pattern
-                morning = len(cell_df[(cell_df['Hour'] >= 6) & (cell_df['Hour'] < 12)])
-                afternoon = len(cell_df[(cell_df['Hour'] >= 12) & (cell_df['Hour'] < 18)])
-                evening = len(cell_df[(cell_df['Hour'] >= 18) & (cell_df['Hour'] < 22)])
-                night = len(cell_df[(cell_df['Hour'] >= 22) | (cell_df['Hour'] < 6)])
-                
-                periods = {'morning': morning, 'afternoon': afternoon, 'evening': evening, 'night': night}
-                hotspot['temporal_pattern'] = max(periods, key=periods.get)
-        
-        if has_days:
-            cell_days = cell_df['DayOfWeek'].dropna()
-            if len(cell_days) > 0:
-                day_counts = cell_days.value_counts()
-                hotspot['peak_days'] = [int(d) for d in day_counts.head(2).index.tolist()]
-        
-        hotspots.append(hotspot)
+            'is_emerging': hotspot_trend in ['new', 'growing'],
+            'cluster_method': 'dbscan'
+        })
     
+    # Sort by weighted score and return top n_hotspots
+    cluster_stats.sort(key=lambda x: x['weighted_score'], reverse=True)
+    hotspots = cluster_stats[:n_hotspots]
+    
+    # Remove cluster_id from output (internal use only)
+    for h in hotspots:
+        h.pop('cluster_id', None)
+    
+    total_clusters = len(cluster_stats)
     emerging_count = sum(1 for h in hotspots if h.get('is_emerging'))
-    logging.info(f"Detected {len(hotspots)} hotspots (temporal: {has_hours or has_days}, recency: {has_recency}, emerging: {emerging_count})")
+    noise_count = len(df_copy[df_copy['cluster'] == -1])
+    
+    logging.info(f"DBSCAN detected {total_clusters} clusters from {len(df)} points "
+                 f"(noise: {noise_count}, returning top {len(hotspots)}, emerging: {emerging_count})")
+    
     return hotspots
 
 
@@ -642,7 +888,8 @@ def build_analysis_prompt(
     stats: Dict,
     hotspots: List[Dict],
     temporal: Optional[Dict] = None,
-    crime_patterns: Optional[Dict[str, Dict]] = None
+    crime_patterns: Optional[Dict[str, Dict]] = None,
+    seasonal: Optional[Dict] = None
 ) -> str:
     """
     Build a context-rich prompt for the LLM based on crime statistics.
@@ -652,6 +899,7 @@ def build_analysis_prompt(
         hotspots: List of detected hotspots
         temporal: Optional temporal patterns dictionary
         crime_patterns: Optional per-crime-type temporal patterns
+        seasonal: Optional seasonal patterns dictionary
         
     Returns:
         Formatted prompt string for the LLM
@@ -739,11 +987,51 @@ def build_analysis_prompt(
             if timing_info:
                 prompt += f"- {crime_type}: {', '.join(timing_info)}\n"
     
+    # Add seasonal patterns if available
+    if seasonal and seasonal.get('has_seasonal_data'):
+        prompt += "\n**Seasonal Patterns:**\n"
+        
+        if seasonal.get('peak_months'):
+            prompt += f"- Peak crime months: {', '.join(seasonal['peak_months'])}\n"
+        
+        if seasonal.get('dominant_season'):
+            prompt += f"- Dominant season: {seasonal['dominant_season'].capitalize()}\n"
+        
+        if seasonal.get('season_comparison'):
+            sc = seasonal['season_comparison']
+            prompt += f"- Seasonal breakdown: Winter {sc.get('winter', 0)}, Spring {sc.get('spring', 0)}, "
+            prompt += f"Summer {sc.get('summer', 0)}, Fall {sc.get('fall', 0)}\n"
+        
+        if seasonal.get('holiday_spike'):
+            effect = seasonal['holiday_spike']
+            if effect == 'higher':
+                prompt += "- Holiday effect: Crime is HIGHER near holidays\n"
+            elif effect == 'lower':
+                prompt += "- Holiday effect: Crime is LOWER near holidays\n"
+            else:
+                prompt += "- Holiday effect: Similar near holidays vs normal days\n"
+        
+        if seasonal.get('payday_spike'):
+            effect = seasonal['payday_spike']
+            if effect == 'higher':
+                prompt += "- Payday effect: Crime is HIGHER around 1st/15th of month\n"
+            elif effect == 'lower':
+                prompt += "- Payday effect: Crime is LOWER around 1st/15th of month\n"
+            else:
+                prompt += "- Payday effect: Similar on paydays vs other days\n"
+        
+        if seasonal.get('year_over_year'):
+            prompt += f"- Year-over-year trend: {seasonal['year_over_year']}\n"
+    
     # Enhanced hotspot section with temporal, recency, and trend context
-    prompt += "\n**Identified Hotspot Areas (ranked by recency-weighted activity):**\n"
+    prompt += "\n**Identified Hotspot Areas (DBSCAN clusters, ranked by recency-weighted activity):**\n"
     for i, hotspot in enumerate(hotspots[:5], 1):
         prompt += f"{i}. Location ({hotspot['latitude']:.4f}, {hotspot['longitude']:.4f}): "
         prompt += f"{hotspot['incident_count']} incidents, primarily {hotspot['dominant_crime']}"
+        
+        # Add cluster radius if available (from DBSCAN)
+        if hotspot.get('cluster_radius_km'):
+            prompt += f" (radius: {hotspot['cluster_radius_km']:.2f}km)"
         
         # Add trend, recency, and temporal context for this hotspot
         context_details = []
@@ -1098,7 +1386,7 @@ def run_analysis(
     type_col: str = 'CrimeType',
     date_col: Optional[str] = None,
     time_col: Optional[str] = None
-) -> Tuple[Dict, List[Dict], str, str, Optional[Dict]]:
+) -> Tuple[Dict, List[Dict], str, str, Optional[Dict], Optional[Dict]]:
     """
     Run the complete crime analysis pipeline.
     
@@ -1111,7 +1399,7 @@ def run_analysis(
         time_col: Optional name of time column for temporal analysis
         
     Returns:
-        Tuple of (statistics, predictions, map_path, report_path, temporal_patterns)
+        Tuple of (statistics, predictions, map_path, report_path, temporal_patterns, seasonal_patterns)
     """
     # Validate and normalize data (including temporal columns if provided)
     df = validate_columns(df, lat_col, lon_col, type_col, date_col, time_col)
@@ -1125,11 +1413,14 @@ def run_analysis(
     # Compute per-crime-type temporal patterns
     crime_patterns = compute_crime_type_patterns(df)
     
-    # Detect hotspots (now includes temporal context and trends per hotspot)
+    # Compute seasonal patterns (holidays, paydays, etc.)
+    seasonal = compute_seasonal_patterns(df)
+    
+    # Detect hotspots using DBSCAN (includes temporal context and trends per hotspot)
     hotspots = detect_hotspots(df)
     
-    # Build prompt with temporal context, crime patterns, and query LLM
-    prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns)
+    # Build prompt with temporal context, crime patterns, seasonal, and query LLM
+    prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns, seasonal)
     logging.info("Querying LLM for predictions...")
     
     llm_output = run_ollama_predictive_model(prompt)
@@ -1158,7 +1449,7 @@ def run_analysis(
     map_path = create_crime_map(df, insights, stats)
     report_path = save_analysis_report(llm_output, stats, insights)
     
-    return stats, insights, map_path, report_path, temporal
+    return stats, insights, map_path, report_path, temporal, seasonal
 
 
 def main():
@@ -1173,7 +1464,7 @@ def main():
     try:
         df = read_crime_data(str(sample_file))
         # Use temporal columns if available in sample data
-        stats, insights, map_path, report_path, temporal = run_analysis(
+        stats, insights, map_path, report_path, temporal, seasonal = run_analysis(
             df,
             date_col='Date' if 'Date' in df.columns else None,
             time_col='Time' if 'Time' in df.columns else None
@@ -1191,6 +1482,15 @@ def main():
                 print(f"  - Peak hours: {temporal['peak_hours']}")
             if temporal.get('recent_trend'):
                 print(f"  - Trend: {temporal['recent_trend']}")
+        
+        if seasonal and seasonal.get('has_seasonal_data'):
+            print(f"\nSeasonal Analysis:")
+            if seasonal.get('peak_months'):
+                print(f"  - Peak months: {seasonal['peak_months']}")
+            if seasonal.get('dominant_season'):
+                print(f"  - Dominant season: {seasonal['dominant_season']}")
+            if seasonal.get('holiday_spike'):
+                print(f"  - Holiday effect: {seasonal['holiday_spike']}")
         
         print(f"\nOutputs:")
         print(f"  - Map: {map_path}")

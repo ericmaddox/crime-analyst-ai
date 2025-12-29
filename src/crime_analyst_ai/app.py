@@ -20,6 +20,7 @@ from src.crime_analyst_ai.core import (
     compute_crime_statistics,
     compute_temporal_patterns,
     compute_crime_type_patterns,
+    compute_seasonal_patterns,
     detect_hotspots,
     build_analysis_prompt,
     run_ollama_predictive_model,
@@ -527,11 +528,14 @@ def run_crime_analysis(
         progress(0.28, desc="Analyzing crime-type patterns...")
         crime_patterns = compute_crime_type_patterns(df_validated)
         
-        progress(0.3, desc="Detecting hotspots...")
+        progress(0.30, desc="Analyzing seasonal patterns...")
+        seasonal = compute_seasonal_patterns(df_validated)
+        
+        progress(0.35, desc="Detecting hotspots (DBSCAN)...")
         hotspots = detect_hotspots(df_validated)
         
         progress(0.4, desc="Building analysis prompt...")
-        prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns)
+        prompt = build_analysis_prompt(stats, hotspots, temporal, crime_patterns, seasonal)
         
         progress(0.5, desc=f"Querying {OLLAMA_MODEL}...")
         llm_output = run_ollama_predictive_model(prompt)
@@ -560,8 +564,8 @@ def run_crime_analysis(
         progress(0.9, desc="Creating report...")
         report_file = save_analysis_report(llm_output, stats, insights)
         
-        # Generate stats HTML (now includes temporal data and crime patterns)
-        stats_html = generate_stats_html(stats, temporal, crime_patterns)
+        # Generate stats HTML (now includes temporal data, crime patterns, and seasonal)
+        stats_html = generate_stats_html(stats, temporal, crime_patterns, seasonal)
         
         # Generate predictions HTML
         predictions_html = generate_predictions_html(insights)
@@ -586,7 +590,7 @@ def run_crime_analysis(
         '''
         
         # Generate report HTML for display
-        report_html = generate_report_html(llm_output, stats, insights, temporal)
+        report_html = generate_report_html(llm_output, stats, insights, temporal, seasonal)
         
         progress(1.0, desc="Complete!")
         
@@ -613,7 +617,7 @@ def run_crime_analysis(
         return error_status, "", "", "", "", None, None
 
 
-def generate_report_html(llm_output: str, stats: dict, insights: list, temporal: Optional[dict] = None) -> str:
+def generate_report_html(llm_output: str, stats: dict, insights: list, temporal: Optional[dict] = None, seasonal: Optional[dict] = None) -> str:
     """Generate HTML for the analysis report display."""
     bounds = stats['geographic_bounds']
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -697,6 +701,58 @@ def generate_report_html(llm_output: str, stats: dict, insights: list, temporal:
         </div>
         '''
     
+    # Add seasonal patterns section if available
+    if seasonal and seasonal.get('has_seasonal_data'):
+        html += '''
+        <div style="margin-bottom: 1.5rem;">
+            <h3 style="color: var(--text-primary); margin: 0 0 0.75rem 0; font-size: 1.1rem;">
+                📅 Seasonal Patterns
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+        '''
+        
+        if seasonal.get('peak_months'):
+            peak_months_str = ', '.join(seasonal['peak_months'][:3])
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Peak Months</div>
+                    <div style="color: var(--accent-warning); font-size: 1rem; font-weight: 600;">{peak_months_str}</div>
+                </div>
+            '''
+        
+        if seasonal.get('dominant_season'):
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Dominant Season</div>
+                    <div style="color: var(--accent-warning); font-size: 1rem; font-weight: 600;">{seasonal['dominant_season'].capitalize()}</div>
+                </div>
+            '''
+        
+        if seasonal.get('holiday_spike'):
+            effect = seasonal['holiday_spike']
+            effect_text = 'Higher' if effect == 'higher' else ('Lower' if effect == 'lower' else 'Similar')
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Holiday Effect</div>
+                    <div style="color: var(--text-primary); font-size: 1rem; font-weight: 600;">{effect_text} near holidays</div>
+                </div>
+            '''
+        
+        if seasonal.get('payday_spike'):
+            effect = seasonal['payday_spike']
+            effect_text = 'Higher' if effect == 'higher' else ('Lower' if effect == 'lower' else 'Similar')
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Payday Effect</div>
+                    <div style="color: var(--text-primary); font-size: 1rem; font-weight: 600;">{effect_text} on 1st/15th</div>
+                </div>
+            '''
+        
+        html += '''
+            </div>
+        </div>
+        '''
+    
     html += '''
         <div style="margin-bottom: 1.5rem;">
             <h3 style="color: var(--text-primary); margin: 0 0 0.75rem 0; font-size: 1.1rem;">
@@ -741,8 +797,8 @@ def generate_report_html(llm_output: str, stats: dict, insights: list, temporal:
     return html
 
 
-def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patterns: Optional[dict] = None) -> str:
-    """Generate HTML for statistics display including temporal and crime-type patterns."""
+def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patterns: Optional[dict] = None, seasonal: Optional[dict] = None) -> str:
+    """Generate HTML for statistics display including temporal, crime-type, and seasonal patterns."""
     bounds = stats['geographic_bounds']
     day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     
@@ -977,6 +1033,134 @@ def generate_stats_html(stats: dict, temporal: Optional[dict] = None, crime_patt
             """
         
         html += "</div>"
+    
+    # Add seasonal patterns section if available
+    if seasonal and seasonal.get('has_seasonal_data'):
+        html += """
+        <div class="panel-header" style="margin-top: 1.5rem;">Seasonal Patterns</div>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+        """
+        
+        # Peak months
+        if seasonal.get('peak_months'):
+            peak_months_str = ', '.join(seasonal['peak_months'][:3])
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Peak Months</div>
+                <div style="color: var(--accent-primary); font-size: 1.1rem; font-weight: 600;">{peak_months_str}</div>
+            </div>
+            """
+        
+        # Dominant season
+        if seasonal.get('dominant_season'):
+            season = seasonal['dominant_season']
+            season_icons = {'winter': '❄️', 'spring': '🌸', 'summer': '☀️', 'fall': '🍂'}
+            season_icon = season_icons.get(season, '')
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Dominant Season</div>
+                <div style="color: var(--accent-primary); font-size: 1.1rem; font-weight: 600;">{season_icon} {season.capitalize()}</div>
+            </div>
+            """
+        
+        # Holiday effect
+        if seasonal.get('holiday_spike'):
+            effect = seasonal['holiday_spike']
+            if effect == 'higher':
+                effect_color = "var(--accent-danger)"
+                effect_icon = "📈"
+                effect_text = "Higher near holidays"
+            elif effect == 'lower':
+                effect_color = "var(--accent-success)"
+                effect_icon = "📉"
+                effect_text = "Lower near holidays"
+            else:
+                effect_color = "var(--text-primary)"
+                effect_icon = "➡️"
+                effect_text = "Similar to normal days"
+            
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Holiday Effect</div>
+                <div style="color: {effect_color}; font-size: 1rem; font-weight: 600;">{effect_icon} {effect_text}</div>
+            </div>
+            """
+        
+        # Payday effect
+        if seasonal.get('payday_spike'):
+            effect = seasonal['payday_spike']
+            if effect == 'higher':
+                effect_color = "var(--accent-danger)"
+                effect_icon = "💸"
+                effect_text = "Higher on 1st/15th"
+            elif effect == 'lower':
+                effect_color = "var(--accent-success)"
+                effect_icon = "📉"
+                effect_text = "Lower on 1st/15th"
+            else:
+                effect_color = "var(--text-primary)"
+                effect_icon = "➡️"
+                effect_text = "No payday effect"
+            
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Payday Effect</div>
+                <div style="color: {effect_color}; font-size: 1rem; font-weight: 600;">{effect_icon} {effect_text}</div>
+            </div>
+            """
+        
+        html += "</div>"
+        
+        # Season comparison breakdown
+        if seasonal.get('season_comparison'):
+            sc = seasonal['season_comparison']
+            total = sum(sc.values()) or 1
+            html += """
+            <div style="margin-top: 1rem;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Seasonal Breakdown</div>
+                <div style="display: flex; gap: 0.5rem; height: 32px; border-radius: 6px; overflow: hidden;">
+            """
+            
+            season_colors = {
+                'winter': '#64b5f6',
+                'spring': '#81c784',
+                'summer': '#ffb74d',
+                'fall': '#ff8a65'
+            }
+            
+            for season_name, count in sc.items():
+                pct = (count / total) * 100
+                color = season_colors.get(season_name, '#64748b')
+                html += f"""
+                    <div style="width: {pct}%; background: {color}; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: 600;" title="{season_name.capitalize()}: {count} ({pct:.1f}%)">
+                        {season_name.capitalize()}
+                    </div>
+                """
+            
+            html += """
+                </div>
+            </div>
+            """
+        
+        # Year over year trend
+        if seasonal.get('year_over_year'):
+            yoy = seasonal['year_over_year']
+            if 'increasing' in yoy.lower():
+                yoy_color = "var(--accent-danger)"
+                yoy_icon = "📈"
+            elif 'decreasing' in yoy.lower():
+                yoy_color = "var(--accent-success)"
+                yoy_icon = "📉"
+            else:
+                yoy_color = "var(--text-primary)"
+                yoy_icon = "➡️"
+            
+            html += f"""
+            <div style="margin-top: 1rem; background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Year-over-Year Trend</div>
+                <div style="color: {yoy_color}; font-size: 1.1rem; font-weight: 600;">{yoy_icon} {yoy.capitalize()}</div>
+            </div>
+            """
     
     html += "</div>"
     

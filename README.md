@@ -24,7 +24,8 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 ### AI-Powered Analysis
 - **Statistical Preprocessing** - Computes crime distribution, geographic hotspots, and patterns
 - **Intelligent Predictions** - Uses Ministral-3:3b model for context-aware crime prediction
-- **Hotspot Detection** - Identifies high-crime areas using density-based clustering with trend analysis
+- **DBSCAN Hotspot Detection** - Identifies natural crime clusters using density-based spatial clustering
+- **Seasonal Intelligence** - AI considers holiday effects, payday patterns, and seasonal trends
 - **Crime-Type Intelligence** - AI learns when specific crime types typically occur for targeted predictions
 - **Validation** - Ensures predictions are geographically plausible
 
@@ -47,6 +48,20 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Visual Indicators** - Clear trend labels (📈 Growing, 📉 Shrinking, ➡️ Stable, 🆕 New)
 - **LLM Context** - Trend data fed to AI for smarter, momentum-aware predictions
 
+### Seasonal Patterns
+- **Monthly Trends** - Identifies which months have the highest crime activity
+- **Seasonal Breakdown** - Compares crime rates across Winter, Spring, Summer, and Fall
+- **Holiday Effect Detection** - Analyzes if crime increases or decreases near major US holidays
+- **Payday Pattern Analysis** - Detects if crimes spike around 1st/15th of month (payday effect)
+- **Year-over-Year Trends** - Tracks if crime is increasing or decreasing over time
+
+### DBSCAN Clustering
+- **Density-Based Hotspots** - Uses DBSCAN algorithm to detect natural crime clusters
+- **Irregular Shapes** - Identifies hotspots of any shape, not just grid squares
+- **Cluster Radius** - Each hotspot reports its geographic extent in kilometers
+- **Noise Filtering** - Automatically excludes isolated incidents as noise
+- **Haversine Distance** - Uses accurate geographic distance calculations
+
 ### Interactive Visualization
 - **Embedded Map View** - Interactive Folium map displayed directly in the UI
 - **Heatmap Layer** - Crime density visualization with gradient coloring
@@ -55,9 +70,9 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Legend** - Clear identification of actual vs. predicted crimes
 
 ### Analysis Results
-- **Statistics Tab** - Crime distribution, temporal patterns, recency indicators, hotspot trends, and crime-specific timing
+- **Statistics Tab** - Crime distribution, temporal patterns, seasonal patterns, recency indicators, and crime-specific timing
 - **Predictions Tab** - Scrollable table with location, type, risk levels, and full analysis
-- **Full Report Tab** - Complete analysis summary with temporal insights, trend data, and AI output
+- **Full Report Tab** - Complete analysis summary with temporal, seasonal insights, and AI output
 - **Export Options** - Download interactive map (HTML) and full report (TXT)
 
 ## Table of Contents
@@ -210,7 +225,8 @@ OLLAMA_MODEL = "your-preferred-model"
 
 ### Adjust Analysis Parameters
 
-- **Hotspot Detection**: Modify `detect_hotspots()` in `core.py`
+- **DBSCAN Clustering**: Modify `eps_km` (default: 0.5km) and `min_samples` (default: 3) in `detect_hotspots()`
+- **Seasonal Patterns**: Adjust `compute_seasonal_patterns()` for holiday proximity and payday analysis
 - **Trend Detection**: Customize hotspot trend thresholds in `detect_hotspots()` (growth/shrinkage sensitivity)
 - **Crime-Type Patterns**: Adjust `compute_crime_type_patterns()` for per-type temporal analysis
 - **LLM Prompt**: Customize `build_analysis_prompt()` in `core.py`
@@ -233,6 +249,33 @@ weight = 0.5^(days_ago / half_life_days)
 | 90 days | 0.125 |
 
 Adjust `half_life_days` in `compute_recency_weights()` to change decay rate.
+
+### DBSCAN Clustering Parameters
+
+The system uses DBSCAN (Density-Based Spatial Clustering of Applications with Noise) for hotspot detection:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `eps_km` | 0.5 | Cluster radius in kilometers |
+| `min_samples` | 3 | Minimum incidents to form a cluster |
+
+Adjust these in `detect_hotspots()` to change sensitivity:
+- **Smaller `eps_km`**: More, smaller clusters (finer detail)
+- **Larger `eps_km`**: Fewer, larger clusters (broader areas)
+- **Higher `min_samples`**: Only significant clusters (fewer false positives)
+
+### Seasonal Pattern Detection
+
+The system analyzes several calendar-based patterns:
+
+| Pattern | Detection Method |
+|---------|------------------|
+| **Holiday Effect** | Compares crimes within 3 days of US holidays vs normal days |
+| **Payday Effect** | Compares crimes on 1st/2nd/15th/16th vs other days of month |
+| **Seasonal** | Winter (Dec-Feb), Spring (Mar-May), Summer (Jun-Aug), Fall (Sep-Nov) |
+| **Year-over-Year** | Compares first year vs last year if multi-year data |
+
+Holiday proximity is calculated for: New Year's Day, MLK Day, Presidents Day, Memorial Day, July 4th, Labor Day, Columbus Day, Veterans Day, Thanksgiving, Christmas, and New Year's Eve.
 
 ### Hotspot Trend Classification
 
@@ -269,6 +312,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **[Folium](https://github.com/python-visualization/folium)** - Interactive map visualization
 - **[Pandas](https://pandas.pydata.org/)** - Data analysis and manipulation
+- **[Scikit-learn](https://scikit-learn.org/)** - DBSCAN clustering algorithm
 - **[Gradio](https://gradio.app)** - Web interface framework
 - **[Ollama](https://ollama.ai)** - Local AI model runtime
 - **[Mistral AI](https://mistral.ai)** - Ministral-3:3b language model
