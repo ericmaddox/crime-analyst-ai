@@ -785,6 +785,62 @@ def generate_stats_html(stats: dict, temporal: Optional[dict] = None) -> str:
     
     html += "</div>"
     
+    # Add recency section if date data available
+    recency = stats.get('recency', {})
+    if recency.get('has_date_data'):
+        html += """
+        <div class="panel-header" style="margin-top: 1.5rem;">Data Recency</div>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+        """
+        
+        # Date range
+        html += f"""
+        <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+            <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Date Range</div>
+            <div style="color: var(--text-primary); font-size: 0.9rem; font-weight: 500;">{recency.get('oldest_date', 'N/A')} to {recency.get('newest_date', 'N/A')}</div>
+        </div>
+        """
+        
+        # Last 30 days
+        last_30 = recency.get('last_30_days', 0)
+        recent_pct = recency.get('recent_activity_pct', 0)
+        html += f"""
+        <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+            <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Last 30 Days</div>
+            <div style="color: var(--accent-warning); font-size: 1.1rem; font-weight: 600;">{last_30} incidents ({recent_pct}%)</div>
+        </div>
+        """
+        
+        # Recency score with visual indicator
+        score = recency.get('recency_score')
+        if score is not None:
+            if score >= 70:
+                score_color = "var(--accent-danger)"
+                score_label = "HIGH"
+            elif score >= 40:
+                score_color = "var(--accent-warning)"
+                score_label = "MEDIUM"
+            else:
+                score_color = "var(--accent-success)"
+                score_label = "LOW"
+            
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px; grid-column: span 2;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Recency Score</div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <div style="flex: 1; background: var(--bg-tertiary); border-radius: 4px; height: 24px; overflow: hidden;">
+                        <div style="width: {score}%; height: 100%; background: linear-gradient(90deg, {score_color}, {score_color});"></div>
+                    </div>
+                    <div style="color: {score_color}; font-weight: 600; min-width: 100px;">{score_label} ({score}/100)</div>
+                </div>
+                <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.5rem;">
+                    Higher scores mean more recent crime activity. Recent crimes are weighted more heavily in predictions.
+                </div>
+            </div>
+            """
+        
+        html += "</div>"
+    
     # Add temporal patterns section if available
     if temporal and temporal.get('has_temporal_data'):
         html += """

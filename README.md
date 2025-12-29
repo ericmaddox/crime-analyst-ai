@@ -18,7 +18,7 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 ### Enterprise Web Interface
 - **Professional Dark Theme** - Modern, enterprise-grade UI with carefully designed aesthetics
 - **Drag-and-Drop Upload** - Easy CSV/Excel file import with automatic column detection
-- **Smart Column Mapping** - Auto-detects latitude, longitude, and crime type columns
+- **Smart Column Mapping** - Auto-detects latitude, longitude, crime type, date, and time columns
 - **Real-time Progress** - Visual progress indicators during analysis
 
 ### AI-Powered Analysis
@@ -26,6 +26,18 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Intelligent Predictions** - Uses Ministral-3:3b model for context-aware crime prediction
 - **Hotspot Detection** - Identifies high-crime areas using density-based clustering
 - **Validation** - Ensures predictions are geographically plausible
+
+### Temporal Analysis
+- **Time-of-Day Patterns** - Identifies peak crime hours (morning, afternoon, evening, night)
+- **Day-of-Week Analysis** - Detects which days have the highest crime activity
+- **Trend Detection** - Determines if crime is rising, falling, or stable over time
+- **Per-Hotspot Timing** - Each hotspot shows its own peak hours and days
+
+### Recency Weighting
+- **Exponential Decay** - Recent crimes weighted more heavily than older data (30-day half-life)
+- **Emerging Hotspots** - Automatically flags areas with recent activity spikes
+- **Recency Score** - Visual indicator showing how recent your data is (0-100 scale)
+- **Smart Ranking** - Hotspots ranked by recency-weighted activity, not just raw counts
 
 ### Interactive Visualization
 - **Embedded Map View** - Interactive Folium map displayed directly in the UI
@@ -35,9 +47,9 @@ An AI-powered predictive crime analysis tool that leverages Python, Folium, Grad
 - **Legend** - Clear identification of actual vs. predicted crimes
 
 ### Analysis Results
-- **Statistics Tab** - Visual crime type distribution with progress bars
-- **Predictions Tab** - Sortable table with location, type, and risk levels
-- **Full Report Tab** - Complete analysis summary with AI output
+- **Statistics Tab** - Crime distribution, temporal patterns, and recency indicators
+- **Predictions Tab** - Scrollable table with location, type, risk levels, and full analysis
+- **Full Report Tab** - Complete analysis summary with temporal insights and AI output
 - **Export Options** - Download interactive map (HTML) and full report (TXT)
 
 ## Table of Contents
@@ -139,9 +151,11 @@ Your crime data file should include these columns:
 | Latitude | Yes | Geographic latitude (decimal degrees) |
 | Longitude | Yes | Geographic longitude (decimal degrees) |
 | CrimeType | Yes | Category of crime (e.g., Theft, Assault) |
-| Date | No | Date of incident |
-| Time | No | Time of incident |
+| Date | Recommended | Date of incident (enables temporal analysis & recency weighting) |
+| Time | Recommended | Time of incident (enables time-of-day pattern detection) |
 | Address | No | Street address |
+
+> **Tip**: Including Date and Time columns significantly improves prediction accuracy. The system uses temporal patterns (peak hours, day-of-week trends) and recency weighting (recent crimes weighted higher) to generate smarter predictions.
 
 A sample data file is included at `data/sample_crime_data.csv`.
 
@@ -191,6 +205,24 @@ OLLAMA_MODEL = "your-preferred-model"
 - **Hotspot Detection**: Modify `detect_hotspots()` in `core.py`
 - **LLM Prompt**: Customize `build_analysis_prompt()` in `core.py`
 - **Map Styling**: Edit `create_crime_map()` in `core.py`
+- **Recency Half-Life**: Change the `half_life_days` parameter in `compute_recency_weights()` (default: 30 days)
+
+### Recency Weighting
+
+The system uses exponential decay to weight recent crimes more heavily:
+
+```
+weight = 0.5^(days_ago / half_life_days)
+```
+
+| Days Ago | Weight (30-day half-life) |
+|----------|---------------------------|
+| 0 (today) | 1.00 |
+| 30 days | 0.50 |
+| 60 days | 0.25 |
+| 90 days | 0.125 |
+
+Adjust `half_life_days` in `compute_recency_weights()` to change decay rate.
 
 ### UI Customization
 

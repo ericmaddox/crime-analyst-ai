@@ -192,7 +192,8 @@ def compute_crime_statistics(df: pd.DataFrame) -> Dict[str, Any]:
             'center_lon': float(df['Longitude'].mean())
         },
         'crime_distribution': {},
-        'top_crime_types': []
+        'top_crime_types': [],
+        'recency': {}
     }
     
     # Crime type distribution
@@ -211,6 +212,9 @@ def compute_crime_statistics(df: pd.DataFrame) -> Dict[str, Any]:
         {'type': str(ct), 'count': int(c), 'percentage': round((c/total)*100, 1)}
         for ct, c in crime_counts.head(5).items()
     ]
+    
+    # Compute recency statistics
+    stats['recency'] = compute_recency_stats(df)
     
     logging.info(f"Computed statistics: {stats['total_records']} records, {len(crime_counts)} crime types")
     return stats
@@ -302,32 +306,150 @@ def compute_temporal_patterns(df: pd.DataFrame) -> Dict[str, Any]:
     return patterns
 
 
-def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10) -> List[Dict[str, Any]]:
+def compute_recency_weights(df: pd.DataFrame, half_life_days: int = 30) -> pd.Series:
+    """
+    Compute recency weights for each crime record using exponential decay.
+    More recent crimes get higher weights.
+    
+    Args:
+        df: DataFrame with 'Date' column
+        half_life_days: Number of days for weight to decay by half (default 30)
+        
+    Returns:
+        Series of weights (0 to 1) indexed like the input DataFrame
+    """
+    if 'Date' not in df.columns or df['Date'].isna().all():
+        # No date data - return uniform weights
+        return pd.Series(1.0, index=df.index)
+    
+    # Get the most recent date in the dataset
+    valid_dates = df['Date'].dropna()
+    if len(valid_dates) == 0:
+        return pd.Series(1.0, index=df.index)
+    
+    max_date = valid_dates.max()
+    
+    # Calculate days ago for each record
+    days_ago = (max_date - df['Date']).dt.days
+    
+    # Apply exponential decay: weight = 0.5^(days_ago / half_life)
+    # This means after half_life_days, the weight is 0.5
+    # After 2*half_life_days, the weight is 0.25, etc.
+    decay_rate = np.log(2) / half_life_days
+    weights = np.exp(-decay_rate * days_ago.fillna(days_ago.max()))
+    
+    # Normalize to have a max of 1
+    weights = weights / weights.max() if weights.max() > 0 else weights
+    
+    logging.info(f"Computed recency weights: half-life={half_life_days} days, "
+                 f"date range={valid_dates.min().date()} to {max_date.date()}")
+    
+    return weights
+
+
+def compute_recency_stats(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Compute recency-related statistics for the crime data.
+    
+    Args:
+        df: DataFrame with 'Date' column
+        
+    Returns:
+        Dictionary containing recency statistics
+    """
+    recency = {
+        'has_date_data': False,
+        'date_range_days': None,
+        'oldest_date': None,
+        'newest_date': None,
+        'last_7_days': 0,
+        'last_30_days': 0,
+        'last_90_days': 0,
+        'older_than_90_days': 0,
+        'recent_activity_pct': 0,  # % of crimes in last 30 days
+        'recency_score': None  # Overall recency indicator
+    }
+    
+    if 'Date' not in df.columns or df['Date'].isna().all():
+        return recency
+    
+    valid_dates = df.dropna(subset=['Date'])
+    if len(valid_dates) == 0:
+        return recency
+    
+    recency['has_date_data'] = True
+    
+    max_date = valid_dates['Date'].max()
+    min_date = valid_dates['Date'].min()
+    
+    recency['oldest_date'] = min_date.strftime('%Y-%m-%d')
+    recency['newest_date'] = max_date.strftime('%Y-%m-%d')
+    recency['date_range_days'] = (max_date - min_date).days
+    
+    # Count crimes by recency bucket
+    days_ago = (max_date - valid_dates['Date']).dt.days
+    
+    recency['last_7_days'] = int((days_ago <= 7).sum())
+    recency['last_30_days'] = int((days_ago <= 30).sum())
+    recency['last_90_days'] = int((days_ago <= 90).sum())
+    recency['older_than_90_days'] = int((days_ago > 90).sum())
+    
+    # Calculate recent activity percentage
+    total = len(valid_dates)
+    if total > 0:
+        recency['recent_activity_pct'] = round((recency['last_30_days'] / total) * 100, 1)
+    
+    # Compute recency score (weighted average of how recent crimes are)
+    # Higher score = more recent activity
+    if len(days_ago) > 0 and recency['date_range_days'] and recency['date_range_days'] > 0:
+        avg_days_ago = days_ago.mean()
+        # Score: 100 if all crimes are today, 0 if all crimes are at oldest date
+        recency['recency_score'] = round(100 * (1 - avg_days_ago / recency['date_range_days']), 1)
+    
+    logging.info(f"Recency stats: {recency['last_30_days']} crimes in last 30 days "
+                 f"({recency['recent_activity_pct']}%), score={recency['recency_score']}")
+    
+    return recency
+
+
+def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10, use_recency_weights: bool = True) -> List[Dict[str, Any]]:
     """
     Detect crime hotspots using geographic density analysis.
     Uses a simple grid-based approach for hotspot detection.
     Includes temporal context (peak hours/days) per hotspot if available.
+    Optionally uses recency weighting to prioritize recent crimes.
     
     Args:
         df: DataFrame with Latitude, Longitude, CrimeType columns
-            Optional: Hour, DayOfWeek columns for temporal analysis
+            Optional: Hour, DayOfWeek, Date columns for temporal analysis
         n_hotspots: Number of top hotspots to return
+        use_recency_weights: Whether to apply recency weighting (default True)
         
     Returns:
-        List of hotspot dictionaries with location, crime info, and temporal patterns
+        List of hotspot dictionaries with location, crime info, temporal patterns, and recency
     """
     # Round coordinates to create grid cells (approximately 0.01 degree ~ 1km)
     df_copy = df.copy()
     df_copy['lat_grid'] = (df_copy['Latitude'] * 100).round() / 100
     df_copy['lon_grid'] = (df_copy['Longitude'] * 100).round() / 100
     
-    # Count crimes per grid cell
+    # Compute recency weights if date data available
+    has_recency = 'Date' in df_copy.columns and df_copy['Date'].notna().any() and use_recency_weights
+    if has_recency:
+        df_copy['recency_weight'] = compute_recency_weights(df_copy)
+    else:
+        df_copy['recency_weight'] = 1.0
+    
+    # Count crimes per grid cell (with weighted sum for recency-aware scoring)
     grid_counts = df_copy.groupby(['lat_grid', 'lon_grid']).agg({
-        'CrimeType': ['count', lambda x: x.mode().iloc[0] if len(x) > 0 else 'Unknown']
+        'CrimeType': ['count', lambda x: x.mode().iloc[0] if len(x) > 0 else 'Unknown'],
+        'recency_weight': 'sum'  # Weighted count
     }).reset_index()
     
-    grid_counts.columns = ['lat', 'lon', 'count', 'dominant_crime']
-    grid_counts = grid_counts.sort_values('count', ascending=False)
+    grid_counts.columns = ['lat', 'lon', 'count', 'dominant_crime', 'weighted_count']
+    
+    # Sort by weighted count (recency-aware) instead of raw count
+    grid_counts = grid_counts.sort_values('weighted_count', ascending=False)
     
     # Check for temporal columns
     has_hours = 'Hour' in df_copy.columns and df_copy['Hour'].notna().any()
@@ -344,16 +466,33 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10) -> List[Dict[str, An
         # Get crime breakdown for this cell
         cell_crimes = cell_df['CrimeType'].value_counts().head(3).to_dict()
         
+        # Calculate recency score for this hotspot
+        hotspot_recency_score = None
+        recent_incident_count = 0
+        if has_recency and 'Date' in cell_df.columns:
+            cell_dates = cell_df.dropna(subset=['Date'])
+            if len(cell_dates) > 0:
+                max_date = df_copy['Date'].max()
+                days_ago = (max_date - cell_dates['Date']).dt.days
+                recent_incident_count = int((days_ago <= 30).sum())
+                # Recency score: average weight of crimes in this cell
+                hotspot_recency_score = round(cell_df['recency_weight'].mean() * 100, 1)
+        
         hotspot = {
             'latitude': float(row['lat']),
             'longitude': float(row['lon']),
             'incident_count': int(row['count']),
+            'weighted_score': round(float(row['weighted_count']), 2),
             'dominant_crime': str(row['dominant_crime']),
             'crime_breakdown': {str(k): int(v) for k, v in cell_crimes.items()},
             # Temporal context for this hotspot
             'peak_hours': None,
             'peak_days': None,
-            'temporal_pattern': None
+            'temporal_pattern': None,
+            # Recency context for this hotspot
+            'recency_score': hotspot_recency_score,
+            'recent_incidents': recent_incident_count,
+            'is_emerging': hotspot_recency_score is not None and hotspot_recency_score >= 70
         }
         
         # Extract temporal patterns for this specific hotspot
@@ -380,7 +519,8 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10) -> List[Dict[str, An
         
         hotspots.append(hotspot)
     
-    logging.info(f"Detected {len(hotspots)} hotspots (with temporal context: {has_hours or has_days})")
+    emerging_count = sum(1 for h in hotspots if h.get('is_emerging'))
+    logging.info(f"Detected {len(hotspots)} hotspots (temporal: {has_hours or has_days}, recency: {has_recency}, emerging: {emerging_count})")
     return hotspots
 
 
@@ -420,6 +560,23 @@ def build_analysis_prompt(
     for crime_info in stats['top_crime_types']:
         prompt += f"- {crime_info['type']}: {crime_info['count']} incidents ({crime_info['percentage']}%)\n"
     
+    # Add recency section if date data available
+    recency = stats.get('recency', {})
+    if recency.get('has_date_data'):
+        prompt += "\n**Data Recency:**\n"
+        prompt += f"- Date range: {recency.get('oldest_date')} to {recency.get('newest_date')} ({recency.get('date_range_days')} days)\n"
+        prompt += f"- Last 7 days: {recency.get('last_7_days')} incidents\n"
+        prompt += f"- Last 30 days: {recency.get('last_30_days')} incidents ({recency.get('recent_activity_pct')}% of total)\n"
+        prompt += f"- Older than 90 days: {recency.get('older_than_90_days')} incidents\n"
+        if recency.get('recency_score') is not None:
+            score = recency['recency_score']
+            if score >= 70:
+                prompt += f"- Overall recency: HIGH ({score}/100) - Most crimes are recent\n"
+            elif score >= 40:
+                prompt += f"- Overall recency: MEDIUM ({score}/100) - Mixed recent and older data\n"
+            else:
+                prompt += f"- Overall recency: LOW ({score}/100) - Most crimes are older\n"
+    
     # Add temporal patterns section if available
     if temporal and temporal.get('has_temporal_data'):
         prompt += "\n**Temporal Patterns:**\n"
@@ -446,28 +603,37 @@ def build_analysis_prompt(
             change = temporal.get('trend_change_pct', 0)
             prompt += f"- Recent trend: {trend.capitalize()} ({change:+.1f}% change)\n"
     
-    # Enhanced hotspot section with temporal context
-    prompt += "\n**Identified Hotspot Areas:**\n"
+    # Enhanced hotspot section with temporal and recency context
+    prompt += "\n**Identified Hotspot Areas (ranked by recency-weighted activity):**\n"
     for i, hotspot in enumerate(hotspots[:5], 1):
         prompt += f"{i}. Location ({hotspot['latitude']:.4f}, {hotspot['longitude']:.4f}): "
         prompt += f"{hotspot['incident_count']} incidents, primarily {hotspot['dominant_crime']}"
         
-        # Add temporal context for this hotspot
-        temporal_details = []
+        # Add recency and temporal context for this hotspot
+        context_details = []
+        
+        # Recency info
+        if hotspot.get('is_emerging'):
+            context_details.append("EMERGING HOTSPOT")
+        elif hotspot.get('recency_score') is not None:
+            if hotspot['recency_score'] >= 50:
+                context_details.append(f"recent activity ({hotspot['recent_incidents']} in last 30 days)")
+        
+        # Temporal info
         if hotspot.get('peak_hours'):
             peak_hour = hotspot['peak_hours'][0]
-            temporal_details.append(f"peaks at {peak_hour}:00")
+            context_details.append(f"peaks at {peak_hour}:00")
         
         if hotspot.get('peak_days'):
             peak_day = hotspot['peak_days'][0]
             if 0 <= peak_day <= 6:
-                temporal_details.append(f"busiest on {day_names[peak_day]}")
+                context_details.append(f"busiest on {day_names[peak_day]}")
         
         if hotspot.get('temporal_pattern'):
-            temporal_details.append(f"{hotspot['temporal_pattern']} activity")
+            context_details.append(f"{hotspot['temporal_pattern']} activity")
         
-        if temporal_details:
-            prompt += f" ({', '.join(temporal_details)})"
+        if context_details:
+            prompt += f" ({', '.join(context_details)})"
         
         prompt += "\n"
     
@@ -475,7 +641,9 @@ def build_analysis_prompt(
 ## YOUR TASK
 
 Based on this analysis, predict 10 locations where crimes are likely to occur in the future. 
-Consider patterns in the data, hotspot clustering, crime type distributions, and temporal patterns.
+Consider patterns in the data, hotspot clustering, crime type distributions, temporal patterns, and data recency.
+
+**PRIORITIZE RECENT ACTIVITY**: Locations with recent crime activity (last 30 days) are more likely to have future crimes than areas with only old data. Emerging hotspots should be weighted heavily.
 
 **IMPORTANT: You must respond with ONLY a valid JSON array. No other text before or after.**
 
@@ -486,7 +654,7 @@ Respond with this exact JSON format:
     "latitude": 33.7550,
     "longitude": -84.3900,
     "crime_type": "Theft",
-    "prediction": "High-traffic commercial area with historical theft patterns, most likely during afternoon hours",
+    "prediction": "High-traffic commercial area with recent theft activity, most likely during afternoon hours",
     "likelihood": 85
   }
 ]
@@ -495,6 +663,7 @@ Respond with this exact JSON format:
 The likelihood should be a number from 0-100 representing the probability percentage.
 Make sure all predicted coordinates are within the geographic bounds provided.
 Include temporal context (time of day, day of week) in your predictions when relevant.
+Give higher likelihood scores to areas with recent activity vs. areas with only old data.
 """
     
     return prompt
