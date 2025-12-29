@@ -103,7 +103,14 @@ def read_crime_data(file_path: str) -> pd.DataFrame:
     return df
 
 
-def validate_columns(df: pd.DataFrame, lat_col: str, lon_col: str, type_col: str) -> pd.DataFrame:
+def validate_columns(
+    df: pd.DataFrame,
+    lat_col: str,
+    lon_col: str,
+    type_col: str,
+    date_col: Optional[str] = None,
+    time_col: Optional[str] = None
+) -> pd.DataFrame:
     """
     Validate and normalize required columns in the DataFrame.
     
@@ -112,9 +119,11 @@ def validate_columns(df: pd.DataFrame, lat_col: str, lon_col: str, type_col: str
         lat_col: Name of the latitude column
         lon_col: Name of the longitude column  
         type_col: Name of the crime type column
+        date_col: Optional name of the date column for temporal analysis
+        time_col: Optional name of the time column for temporal analysis
         
     Returns:
-        DataFrame with standardized column names
+        DataFrame with standardized column names and temporal columns if provided
     """
     required = {lat_col: 'Latitude', lon_col: 'Longitude', type_col: 'CrimeType'}
     
@@ -138,6 +147,25 @@ def validate_columns(df: pd.DataFrame, lat_col: str, lon_col: str, type_col: str
     
     if len(df) == 0:
         raise ValueError("No valid data remaining after cleaning coordinates")
+    
+    # Parse temporal columns if provided
+    if date_col and date_col in df.columns:
+        df['Date'] = pd.to_datetime(df[date_col], errors='coerce')
+        df['DayOfWeek'] = df['Date'].dt.dayofweek  # 0=Monday, 6=Sunday
+        df['Month'] = df['Date'].dt.month
+        valid_dates = df['Date'].notna().sum()
+        logging.info(f"Parsed {valid_dates} valid dates from '{date_col}'")
+    
+    if time_col and time_col in df.columns:
+        # Try multiple time formats
+        time_parsed = pd.to_datetime(df[time_col], format='%H:%M', errors='coerce')
+        if time_parsed.isna().all():
+            time_parsed = pd.to_datetime(df[time_col], format='%H:%M:%S', errors='coerce')
+        if time_parsed.isna().all():
+            time_parsed = pd.to_datetime(df[time_col], errors='coerce')
+        df['Hour'] = time_parsed.dt.hour
+        valid_times = df['Hour'].notna().sum()
+        logging.info(f"Parsed {valid_times} valid times from '{time_col}'")
     
     logging.info(f"Validated {len(df)} records with columns: Latitude, Longitude, CrimeType")
     return df
@@ -188,17 +216,105 @@ def compute_crime_statistics(df: pd.DataFrame) -> Dict[str, Any]:
     return stats
 
 
+def compute_temporal_patterns(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Analyze temporal crime patterns from the data.
+    
+    Args:
+        df: DataFrame with optional Date, DayOfWeek, Month, Hour columns
+        
+    Returns:
+        Dictionary containing temporal patterns and insights
+    """
+    patterns = {
+        'hourly_distribution': {},      # Crimes by hour (0-23)
+        'daily_distribution': {},       # Crimes by day of week
+        'monthly_distribution': {},     # Crimes by month
+        'peak_hours': [],               # Top 3 hours
+        'peak_days': [],                # Top 3 days
+        'time_periods': {},             # Morning/Afternoon/Evening/Night breakdown
+        'recent_trend': None,           # Rising/Falling/Stable
+        'has_temporal_data': False      # Whether temporal data was available
+    }
+    
+    # Analyze hourly patterns
+    if 'Hour' in df.columns and df['Hour'].notna().any():
+        patterns['has_temporal_data'] = True
+        hourly = df['Hour'].value_counts().sort_index()
+        patterns['hourly_distribution'] = {int(k): int(v) for k, v in hourly.items()}
+        patterns['peak_hours'] = [int(h) for h in hourly.nlargest(3).index.tolist()]
+        
+        # Time period breakdown
+        morning = len(df[(df['Hour'] >= 6) & (df['Hour'] < 12)])
+        afternoon = len(df[(df['Hour'] >= 12) & (df['Hour'] < 18)])
+        evening = len(df[(df['Hour'] >= 18) & (df['Hour'] < 22)])
+        night = len(df[(df['Hour'] >= 22) | (df['Hour'] < 6)])
+        
+        patterns['time_periods'] = {
+            'morning': morning,
+            'afternoon': afternoon,
+            'evening': evening,
+            'night': night
+        }
+        
+        # Determine dominant time period
+        time_max = max(patterns['time_periods'], key=patterns['time_periods'].get)
+        patterns['dominant_time_period'] = time_max
+    
+    # Analyze day of week patterns
+    if 'DayOfWeek' in df.columns and df['DayOfWeek'].notna().any():
+        patterns['has_temporal_data'] = True
+        daily = df['DayOfWeek'].value_counts()
+        patterns['daily_distribution'] = {int(k): int(v) for k, v in daily.items()}
+        patterns['peak_days'] = [int(d) for d in daily.nlargest(3).index.tolist()]
+    
+    # Analyze monthly patterns
+    if 'Month' in df.columns and df['Month'].notna().any():
+        patterns['has_temporal_data'] = True
+        monthly = df['Month'].value_counts().sort_index()
+        patterns['monthly_distribution'] = {int(k): int(v) for k, v in monthly.items()}
+    
+    # Trend analysis (compare first half vs second half of data by date)
+    if 'Date' in df.columns and df['Date'].notna().any():
+        patterns['has_temporal_data'] = True
+        sorted_df = df.dropna(subset=['Date']).sort_values('Date')
+        
+        if len(sorted_df) >= 10:  # Need enough data points for meaningful trend
+            midpoint = len(sorted_df) // 2
+            first_half_count = midpoint
+            second_half_count = len(sorted_df) - midpoint
+            
+            if first_half_count > 0:
+                change_pct = ((second_half_count - first_half_count) / first_half_count) * 100
+                if change_pct > 10:
+                    patterns['recent_trend'] = 'rising'
+                elif change_pct < -10:
+                    patterns['recent_trend'] = 'falling'
+                else:
+                    patterns['recent_trend'] = 'stable'
+                patterns['trend_change_pct'] = round(change_pct, 1)
+    
+    if patterns['has_temporal_data']:
+        logging.info(f"Computed temporal patterns: peak hours {patterns['peak_hours']}, peak days {patterns['peak_days']}, trend: {patterns['recent_trend']}")
+    else:
+        logging.info("No temporal data available for pattern analysis")
+    
+    return patterns
+
+
 def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10) -> List[Dict[str, Any]]:
     """
     Detect crime hotspots using geographic density analysis.
     Uses a simple grid-based approach for hotspot detection.
+    Includes temporal context (peak hours/days) per hotspot if available.
     
     Args:
         df: DataFrame with Latitude, Longitude, CrimeType columns
+            Optional: Hour, DayOfWeek columns for temporal analysis
         n_hotspots: Number of top hotspots to return
         
     Returns:
-        List of hotspot dictionaries with location and crime info
+        List of hotspot dictionaries with location, crime info, and temporal patterns
     """
     # Round coordinates to create grid cells (approximately 0.01 degree ~ 1km)
     df_copy = df.copy()
@@ -213,38 +329,79 @@ def detect_hotspots(df: pd.DataFrame, n_hotspots: int = 10) -> List[Dict[str, An
     grid_counts.columns = ['lat', 'lon', 'count', 'dominant_crime']
     grid_counts = grid_counts.sort_values('count', ascending=False)
     
+    # Check for temporal columns
+    has_hours = 'Hour' in df_copy.columns and df_copy['Hour'].notna().any()
+    has_days = 'DayOfWeek' in df_copy.columns and df_copy['DayOfWeek'].notna().any()
+    
     hotspots = []
     for _, row in grid_counts.head(n_hotspots).iterrows():
-        # Get crime breakdown for this cell
-        cell_crimes = df_copy[
+        # Get data for this cell
+        cell_df = df_copy[
             (df_copy['lat_grid'] == row['lat']) & 
             (df_copy['lon_grid'] == row['lon'])
-        ]['CrimeType'].value_counts().head(3).to_dict()
+        ]
         
-        hotspots.append({
+        # Get crime breakdown for this cell
+        cell_crimes = cell_df['CrimeType'].value_counts().head(3).to_dict()
+        
+        hotspot = {
             'latitude': float(row['lat']),
             'longitude': float(row['lon']),
             'incident_count': int(row['count']),
             'dominant_crime': str(row['dominant_crime']),
-            'crime_breakdown': {str(k): int(v) for k, v in cell_crimes.items()}
-        })
+            'crime_breakdown': {str(k): int(v) for k, v in cell_crimes.items()},
+            # Temporal context for this hotspot
+            'peak_hours': None,
+            'peak_days': None,
+            'temporal_pattern': None
+        }
+        
+        # Extract temporal patterns for this specific hotspot
+        if has_hours:
+            cell_hours = cell_df['Hour'].dropna()
+            if len(cell_hours) > 0:
+                hour_counts = cell_hours.value_counts()
+                hotspot['peak_hours'] = [int(h) for h in hour_counts.head(2).index.tolist()]
+                
+                # Determine time period pattern
+                morning = len(cell_df[(cell_df['Hour'] >= 6) & (cell_df['Hour'] < 12)])
+                afternoon = len(cell_df[(cell_df['Hour'] >= 12) & (cell_df['Hour'] < 18)])
+                evening = len(cell_df[(cell_df['Hour'] >= 18) & (cell_df['Hour'] < 22)])
+                night = len(cell_df[(cell_df['Hour'] >= 22) | (cell_df['Hour'] < 6)])
+                
+                periods = {'morning': morning, 'afternoon': afternoon, 'evening': evening, 'night': night}
+                hotspot['temporal_pattern'] = max(periods, key=periods.get)
+        
+        if has_days:
+            cell_days = cell_df['DayOfWeek'].dropna()
+            if len(cell_days) > 0:
+                day_counts = cell_days.value_counts()
+                hotspot['peak_days'] = [int(d) for d in day_counts.head(2).index.tolist()]
+        
+        hotspots.append(hotspot)
     
-    logging.info(f"Detected {len(hotspots)} hotspots")
+    logging.info(f"Detected {len(hotspots)} hotspots (with temporal context: {has_hours or has_days})")
     return hotspots
 
 
-def build_analysis_prompt(stats: Dict, hotspots: List[Dict]) -> str:
+def build_analysis_prompt(
+    stats: Dict,
+    hotspots: List[Dict],
+    temporal: Optional[Dict] = None
+) -> str:
     """
     Build a context-rich prompt for the LLM based on crime statistics.
     
     Args:
         stats: Crime statistics dictionary
         hotspots: List of detected hotspots
+        temporal: Optional temporal patterns dictionary
         
     Returns:
         Formatted prompt string for the LLM
     """
     bounds = stats['geographic_bounds']
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
     prompt = f"""You are a crime analyst AI. Based on the following historical crime data analysis, predict 10 likely future crime locations with likelihood scores.
 
@@ -263,16 +420,62 @@ def build_analysis_prompt(stats: Dict, hotspots: List[Dict]) -> str:
     for crime_info in stats['top_crime_types']:
         prompt += f"- {crime_info['type']}: {crime_info['count']} incidents ({crime_info['percentage']}%)\n"
     
+    # Add temporal patterns section if available
+    if temporal and temporal.get('has_temporal_data'):
+        prompt += "\n**Temporal Patterns:**\n"
+        
+        if temporal.get('peak_hours'):
+            peak_hours_str = ', '.join([f"{h}:00" for h in temporal['peak_hours']])
+            prompt += f"- Peak crime hours: {peak_hours_str}\n"
+        
+        if temporal.get('peak_days'):
+            peak_day_names = [day_names[d] for d in temporal['peak_days'] if 0 <= d <= 6]
+            if peak_day_names:
+                prompt += f"- Peak crime days: {', '.join(peak_day_names)}\n"
+        
+        if temporal.get('time_periods'):
+            tp = temporal['time_periods']
+            prompt += f"- Time breakdown: Morning {tp.get('morning', 0)}, Afternoon {tp.get('afternoon', 0)}, "
+            prompt += f"Evening {tp.get('evening', 0)}, Night {tp.get('night', 0)}\n"
+        
+        if temporal.get('dominant_time_period'):
+            prompt += f"- Most active period: {temporal['dominant_time_period'].capitalize()}\n"
+        
+        if temporal.get('recent_trend'):
+            trend = temporal['recent_trend']
+            change = temporal.get('trend_change_pct', 0)
+            prompt += f"- Recent trend: {trend.capitalize()} ({change:+.1f}% change)\n"
+    
+    # Enhanced hotspot section with temporal context
     prompt += "\n**Identified Hotspot Areas:**\n"
     for i, hotspot in enumerate(hotspots[:5], 1):
         prompt += f"{i}. Location ({hotspot['latitude']:.4f}, {hotspot['longitude']:.4f}): "
-        prompt += f"{hotspot['incident_count']} incidents, primarily {hotspot['dominant_crime']}\n"
+        prompt += f"{hotspot['incident_count']} incidents, primarily {hotspot['dominant_crime']}"
+        
+        # Add temporal context for this hotspot
+        temporal_details = []
+        if hotspot.get('peak_hours'):
+            peak_hour = hotspot['peak_hours'][0]
+            temporal_details.append(f"peaks at {peak_hour}:00")
+        
+        if hotspot.get('peak_days'):
+            peak_day = hotspot['peak_days'][0]
+            if 0 <= peak_day <= 6:
+                temporal_details.append(f"busiest on {day_names[peak_day]}")
+        
+        if hotspot.get('temporal_pattern'):
+            temporal_details.append(f"{hotspot['temporal_pattern']} activity")
+        
+        if temporal_details:
+            prompt += f" ({', '.join(temporal_details)})"
+        
+        prompt += "\n"
     
     prompt += """
 ## YOUR TASK
 
 Based on this analysis, predict 10 locations where crimes are likely to occur in the future. 
-Consider patterns in the data, hotspot clustering, and crime type distributions.
+Consider patterns in the data, hotspot clustering, crime type distributions, and temporal patterns.
 
 **IMPORTANT: You must respond with ONLY a valid JSON array. No other text before or after.**
 
@@ -283,7 +486,7 @@ Respond with this exact JSON format:
     "latitude": 33.7550,
     "longitude": -84.3900,
     "crime_type": "Theft",
-    "prediction": "High-traffic commercial area with historical theft patterns",
+    "prediction": "High-traffic commercial area with historical theft patterns, most likely during afternoon hours",
     "likelihood": 85
   }
 ]
@@ -291,6 +494,7 @@ Respond with this exact JSON format:
 
 The likelihood should be a number from 0-100 representing the probability percentage.
 Make sure all predicted coordinates are within the geographic bounds provided.
+Include temporal context (time of day, day of week) in your predictions when relevant.
 """
     
     return prompt
@@ -578,8 +782,10 @@ def run_analysis(
     df: pd.DataFrame,
     lat_col: str = 'Latitude',
     lon_col: str = 'Longitude',
-    type_col: str = 'CrimeType'
-) -> Tuple[Dict, List[Dict], str, str]:
+    type_col: str = 'CrimeType',
+    date_col: Optional[str] = None,
+    time_col: Optional[str] = None
+) -> Tuple[Dict, List[Dict], str, str, Optional[Dict]]:
     """
     Run the complete crime analysis pipeline.
     
@@ -588,21 +794,26 @@ def run_analysis(
         lat_col: Name of latitude column
         lon_col: Name of longitude column
         type_col: Name of crime type column
+        date_col: Optional name of date column for temporal analysis
+        time_col: Optional name of time column for temporal analysis
         
     Returns:
-        Tuple of (statistics, predictions, map_path, report_path)
+        Tuple of (statistics, predictions, map_path, report_path, temporal_patterns)
     """
-    # Validate and normalize data
-    df = validate_columns(df, lat_col, lon_col, type_col)
+    # Validate and normalize data (including temporal columns if provided)
+    df = validate_columns(df, lat_col, lon_col, type_col, date_col, time_col)
     
     # Compute statistics
     stats = compute_crime_statistics(df)
     
-    # Detect hotspots
+    # Compute temporal patterns if temporal data is available
+    temporal = compute_temporal_patterns(df)
+    
+    # Detect hotspots (now includes temporal context per hotspot)
     hotspots = detect_hotspots(df)
     
-    # Build prompt and query LLM
-    prompt = build_analysis_prompt(stats, hotspots)
+    # Build prompt with temporal context and query LLM
+    prompt = build_analysis_prompt(stats, hotspots, temporal)
     logging.info("Querying LLM for predictions...")
     
     llm_output = run_ollama_predictive_model(prompt)
@@ -631,7 +842,7 @@ def run_analysis(
     map_path = create_crime_map(df, insights, stats)
     report_path = save_analysis_report(llm_output, stats, insights)
     
-    return stats, insights, map_path, report_path
+    return stats, insights, map_path, report_path, temporal
 
 
 def main():
@@ -645,13 +856,26 @@ def main():
     
     try:
         df = read_crime_data(str(sample_file))
-        stats, insights, map_path, report_path = run_analysis(df)
+        # Use temporal columns if available in sample data
+        stats, insights, map_path, report_path, temporal = run_analysis(
+            df,
+            date_col='Date' if 'Date' in df.columns else None,
+            time_col='Time' if 'Time' in df.columns else None
+        )
         
         print("\n" + "=" * 50)
         print("CRIME ANALYST AI - ANALYSIS COMPLETE")
         print("=" * 50)
         print(f"\nRecords analyzed: {stats['total_records']}")
         print(f"Predictions generated: {len(insights)}")
+        
+        if temporal and temporal.get('has_temporal_data'):
+            print(f"\nTemporal Analysis:")
+            if temporal.get('peak_hours'):
+                print(f"  - Peak hours: {temporal['peak_hours']}")
+            if temporal.get('recent_trend'):
+                print(f"  - Trend: {temporal['recent_trend']}")
+        
         print(f"\nOutputs:")
         print(f"  - Map: {map_path}")
         print(f"  - Report: {report_path}")

@@ -18,6 +18,7 @@ from src.crime_analyst_ai.core import (
     read_crime_data,
     validate_columns,
     compute_crime_statistics,
+    compute_temporal_patterns,
     detect_hotspots,
     build_analysis_prompt,
     run_ollama_predictive_model,
@@ -443,14 +444,23 @@ def load_file(file) -> Tuple[Optional[pd.DataFrame], str, str]:
 def update_column_dropdowns(df: Optional[pd.DataFrame]):
     """Update column dropdown choices when file is loaded."""
     if df is None:
-        return gr.update(choices=[]), gr.update(choices=[]), gr.update(choices=[])
+        return (
+            gr.update(choices=[]),
+            gr.update(choices=[]),
+            gr.update(choices=[]),
+            gr.update(choices=[]),
+            gr.update(choices=[])
+        )
     
     columns = list(df.columns)
+    columns_with_none = ["(None)"] + columns
     
     # Try to auto-detect columns
     lat_default = None
     lon_default = None
     type_default = None
+    date_default = "(None)"
+    time_default = "(None)"
     
     for col in columns:
         col_lower = col.lower()
@@ -460,11 +470,17 @@ def update_column_dropdowns(df: Optional[pd.DataFrame]):
             lon_default = col
         if any(x in col_lower for x in ['type', 'crime', 'offense', 'category']) and type_default is None:
             type_default = col
+        if any(x in col_lower for x in ['date', 'occurred', 'reported']) and date_default == "(None)":
+            date_default = col
+        if any(x in col_lower for x in ['time', 'hour']) and 'datetime' not in col_lower and time_default == "(None)":
+            time_default = col
     
     return (
         gr.update(choices=columns, value=lat_default),
         gr.update(choices=columns, value=lon_default),
-        gr.update(choices=columns, value=type_default)
+        gr.update(choices=columns, value=type_default),
+        gr.update(choices=columns_with_none, value=date_default),
+        gr.update(choices=columns_with_none, value=time_default)
     )
 
 
@@ -473,10 +489,12 @@ def run_crime_analysis(
     lat_col: str,
     lon_col: str,
     type_col: str,
+    date_col: Optional[str] = None,
+    time_col: Optional[str] = None,
     progress=gr.Progress()
 ) -> Tuple[str, str, str, str, str, Optional[str], Optional[str]]:
     """
-    Run the crime analysis pipeline.
+    Run the crime analysis pipeline with optional temporal analysis.
     
     Returns:
         Tuple of (status, stats_html, predictions_html, map_iframe, report_html, map_file, report_file)
@@ -487,18 +505,29 @@ def run_crime_analysis(
     if not all([lat_col, lon_col, type_col]):
         return "❌ Please select all required columns", "", "", "", "", None, None
     
+    # Handle "(None)" selection for optional columns
+    date_col_actual = None if date_col in [None, "(None)", ""] else date_col
+    time_col_actual = None if time_col in [None, "(None)", ""] else time_col
+    
     try:
         progress(0.1, desc="Validating data...")
-        df_validated = validate_columns(df.copy(), lat_col, lon_col, type_col)
+        df_validated = validate_columns(
+            df.copy(), lat_col, lon_col, type_col,
+            date_col=date_col_actual,
+            time_col=time_col_actual
+        )
         
         progress(0.2, desc="Computing statistics...")
         stats = compute_crime_statistics(df_validated)
+        
+        progress(0.25, desc="Analyzing temporal patterns...")
+        temporal = compute_temporal_patterns(df_validated)
         
         progress(0.3, desc="Detecting hotspots...")
         hotspots = detect_hotspots(df_validated)
         
         progress(0.4, desc="Building analysis prompt...")
-        prompt = build_analysis_prompt(stats, hotspots)
+        prompt = build_analysis_prompt(stats, hotspots, temporal)
         
         progress(0.5, desc=f"Querying {OLLAMA_MODEL}...")
         llm_output = run_ollama_predictive_model(prompt)
@@ -527,8 +556,8 @@ def run_crime_analysis(
         progress(0.9, desc="Creating report...")
         report_file = save_analysis_report(llm_output, stats, insights)
         
-        # Generate stats HTML
-        stats_html = generate_stats_html(stats)
+        # Generate stats HTML (now includes temporal data)
+        stats_html = generate_stats_html(stats, temporal)
         
         # Generate predictions HTML
         predictions_html = generate_predictions_html(insights)
@@ -553,13 +582,18 @@ def run_crime_analysis(
         '''
         
         # Generate report HTML for display
-        report_html = generate_report_html(llm_output, stats, insights)
+        report_html = generate_report_html(llm_output, stats, insights, temporal)
         
         progress(1.0, desc="Complete!")
         
+        # Build status message with temporal info
+        temporal_note = ""
+        if temporal and temporal.get('has_temporal_data'):
+            temporal_note = " (with temporal analysis)"
+        
         status = f"""
         <div class="status-indicator status-success">
-            ✓ Analysis Complete - {len(insights)} predictions generated
+            ✓ Analysis Complete - {len(insights)} predictions generated{temporal_note}
         </div>
         """
         
@@ -575,9 +609,10 @@ def run_crime_analysis(
         return error_status, "", "", "", "", None, None
 
 
-def generate_report_html(llm_output: str, stats: dict, insights: list) -> str:
+def generate_report_html(llm_output: str, stats: dict, insights: list, temporal: Optional[dict] = None) -> str:
     """Generate HTML for the analysis report display."""
     bounds = stats['geographic_bounds']
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
     html = f'''
     <div style="padding: 1.5rem; background: var(--bg-tertiary); border-radius: 10px; max-height: 500px; overflow-y: auto;">
@@ -604,7 +639,61 @@ def generate_report_html(llm_output: str, stats: dict, insights: list) -> str:
                 </div>
             </div>
         </div>
+    '''
+    
+    # Add temporal patterns section if available
+    if temporal and temporal.get('has_temporal_data'):
+        html += '''
+        <div style="margin-bottom: 1.5rem;">
+            <h3 style="color: var(--text-primary); margin: 0 0 0.75rem 0; font-size: 1.1rem;">
+                ⏰ Temporal Analysis
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+        '''
         
+        if temporal.get('peak_hours'):
+            peak_hours_str = ', '.join([f"{h}:00" for h in temporal['peak_hours'][:3]])
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Peak Hours</div>
+                    <div style="color: var(--accent-warning); font-size: 1rem; font-weight: 600;">{peak_hours_str}</div>
+                </div>
+            '''
+        
+        if temporal.get('peak_days'):
+            peak_day_names = [day_names[d] for d in temporal['peak_days'][:3] if 0 <= d <= 6]
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Peak Days</div>
+                    <div style="color: var(--accent-warning); font-size: 1rem; font-weight: 600;">{', '.join(peak_day_names)}</div>
+                </div>
+            '''
+        
+        if temporal.get('recent_trend'):
+            trend = temporal['recent_trend']
+            trend_icon = "↑" if trend == "rising" else ("↓" if trend == "falling" else "→")
+            change = temporal.get('trend_change_pct', 0)
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Trend</div>
+                    <div style="color: var(--text-primary); font-size: 1rem; font-weight: 600;">{trend_icon} {trend.capitalize()} ({change:+.1f}%)</div>
+                </div>
+            '''
+        
+        if temporal.get('dominant_time_period'):
+            html += f'''
+                <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">Most Active</div>
+                    <div style="color: var(--text-primary); font-size: 1rem; font-weight: 600;">{temporal['dominant_time_period'].capitalize()}</div>
+                </div>
+            '''
+        
+        html += '''
+            </div>
+        </div>
+        '''
+    
+    html += '''
         <div style="margin-bottom: 1.5rem;">
             <h3 style="color: var(--text-primary); margin: 0 0 0.75rem 0; font-size: 1.1rem;">
                 📊 Crime Type Breakdown
@@ -648,9 +737,10 @@ def generate_report_html(llm_output: str, stats: dict, insights: list) -> str:
     return html
 
 
-def generate_stats_html(stats: dict) -> str:
-    """Generate HTML for statistics display."""
+def generate_stats_html(stats: dict, temporal: Optional[dict] = None) -> str:
+    """Generate HTML for statistics display including temporal patterns."""
     bounds = stats['geographic_bounds']
+    day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
     
     html = f"""
     <div style="padding: 1rem;">
@@ -693,10 +783,91 @@ def generate_stats_html(stats: dict) -> str:
             </div>
         """
     
-    html += """
-        </div>
-    </div>
-    """
+    html += "</div>"
+    
+    # Add temporal patterns section if available
+    if temporal and temporal.get('has_temporal_data'):
+        html += """
+        <div class="panel-header" style="margin-top: 1.5rem;">Temporal Patterns</div>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+        """
+        
+        # Peak hours
+        if temporal.get('peak_hours'):
+            peak_hours_str = ', '.join([f"{h}:00" for h in temporal['peak_hours'][:3]])
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Peak Hours</div>
+                <div style="color: var(--accent-primary); font-size: 1.1rem; font-weight: 600;">{peak_hours_str}</div>
+            </div>
+            """
+        
+        # Peak days
+        if temporal.get('peak_days'):
+            peak_day_names = [day_names[d] for d in temporal['peak_days'][:3] if 0 <= d <= 6]
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Peak Days</div>
+                <div style="color: var(--accent-primary); font-size: 1.1rem; font-weight: 600;">{', '.join(peak_day_names)}</div>
+            </div>
+            """
+        
+        # Dominant time period
+        if temporal.get('dominant_time_period'):
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Most Active Period</div>
+                <div style="color: var(--accent-primary); font-size: 1.1rem; font-weight: 600;">{temporal['dominant_time_period'].capitalize()}</div>
+            </div>
+            """
+        
+        # Trend
+        if temporal.get('recent_trend'):
+            trend = temporal['recent_trend']
+            trend_color = "var(--accent-danger)" if trend == "rising" else ("var(--accent-success)" if trend == "falling" else "var(--text-primary)")
+            trend_icon = "↑" if trend == "rising" else ("↓" if trend == "falling" else "→")
+            change = temporal.get('trend_change_pct', 0)
+            html += f"""
+            <div style="background: var(--bg-elevated); padding: 1rem; border-radius: 8px;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Recent Trend</div>
+                <div style="color: {trend_color}; font-size: 1.1rem; font-weight: 600;">{trend_icon} {trend.capitalize()} ({change:+.1f}%)</div>
+            </div>
+            """
+        
+        html += "</div>"
+        
+        # Time period breakdown
+        if temporal.get('time_periods'):
+            tp = temporal['time_periods']
+            total = sum(tp.values()) or 1
+            html += """
+            <div style="margin-top: 1rem;">
+                <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.5rem;">Time of Day Breakdown</div>
+                <div style="display: flex; gap: 0.5rem; height: 32px; border-radius: 6px; overflow: hidden;">
+            """
+            
+            time_colors = {
+                'morning': '#f59e0b',
+                'afternoon': '#3b82f6',
+                'evening': '#8b5cf6',
+                'night': '#1e293b'
+            }
+            
+            for period, count in tp.items():
+                pct = (count / total) * 100
+                color = time_colors.get(period, '#64748b')
+                html += f"""
+                    <div style="width: {pct}%; background: {color}; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: 600;" title="{period.capitalize()}: {count} ({pct:.1f}%)">
+                        {period.capitalize()}
+                    </div>
+                """
+            
+            html += """
+                </div>
+            </div>
+            """
+    
+    html += "</div>"
     
     return html
 
@@ -748,7 +919,9 @@ def generate_predictions_html(insights: list) -> str:
                     <span class="{risk_class}">{risk_label} ({likelihood})</span>
                 </td>
                 <td style="padding: 0.75rem; color: var(--text-secondary); font-size: 0.875rem; max-width: 300px;">
-                    {insight['Prediction'][:100]}...
+                    <div style="max-height: 80px; overflow-y: auto; padding-right: 0.5rem;">
+                        {insight['Prediction']}
+                    </div>
                 </td>
             </tr>
         """
@@ -823,6 +996,22 @@ def create_app():
                         label="Crime Type Column",
                         choices=[],
                         interactive=True
+                    )
+                
+                gr.HTML('<div class="panel-header" style="margin-top: 1.5rem;">⏰ TEMPORAL COLUMNS (Optional)</div>')
+                
+                with gr.Group():
+                    date_dropdown = gr.Dropdown(
+                        label="Date Column",
+                        choices=[],
+                        interactive=True,
+                        info="Enable temporal pattern analysis"
+                    )
+                    time_dropdown = gr.Dropdown(
+                        label="Time Column",
+                        choices=[],
+                        interactive=True,
+                        info="Enable time-of-day analysis"
                     )
                 
                 analyze_btn = gr.Button(
@@ -910,12 +1099,12 @@ def create_app():
         ).then(
             fn=update_column_dropdowns,
             inputs=[df_state],
-            outputs=[lat_dropdown, lon_dropdown, type_dropdown]
+            outputs=[lat_dropdown, lon_dropdown, type_dropdown, date_dropdown, time_dropdown]
         )
         
         analyze_btn.click(
             fn=run_crime_analysis,
-            inputs=[df_state, lat_dropdown, lon_dropdown, type_dropdown],
+            inputs=[df_state, lat_dropdown, lon_dropdown, type_dropdown, date_dropdown, time_dropdown],
             outputs=[analysis_status, stats_display, predictions_display, map_display, report_display, map_download, report_download]
         )
     
